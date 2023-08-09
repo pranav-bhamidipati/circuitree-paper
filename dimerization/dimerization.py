@@ -9,7 +9,7 @@ from circuitree import SimpleNetworkTree
 from circuitree.parallel import DefaultFactoryDict
 
 try:
-    from models.oscillation.gillespie import (
+    from oscillation.gillespie import (
         GillespieSSA,
         make_matrices_for_ssa,
         SAMPLING_RANGES,
@@ -605,10 +605,14 @@ class OscillationTree(SimpleNetworkTree):
 
     def has_motif(self, state, motif):
         if ("::" in motif) or ("*" in motif):
-            raise ValueError("Motif code should only contain interactions, no components")
+            raise ValueError(
+                "Motif code should only contain interactions, no components"
+            )
         if "::" not in state:
-            raise ValueError("State code should contain both components and interactions")
-        
+            raise ValueError(
+                "State code should contain both components and interactions"
+            )
+
         interaction_code = state.split("::")[1]
         if not interaction_code:
             return False

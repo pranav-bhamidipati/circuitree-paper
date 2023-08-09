@@ -8,7 +8,7 @@ from scipy.signal import correlate
 from circuitree import SimpleNetworkTree
 
 try:
-    from models.oscillation.gillespie import (
+    from oscillation.gillespie import (
         GillespieSSA,
         make_matrices_for_ssa,
         SAMPLING_RANGES,
@@ -87,7 +87,7 @@ class TFNetworkModel:
         self.dt = dt
         self.nt = nt
         self.max_iter_per_timestep = max_iter_per_timestep
-        
+
         self.ssa: GillespieSSA | None = None
         if initialize:
             if any(arg is None for arg in (seed, dt, nt)):

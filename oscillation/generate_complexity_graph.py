@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Optional
 from networkx.drawing.nx_agraph import graphviz_layout
 import pandas as pd
-from models.oscillation.oscillation import OscillationTree
+from oscillation.oscillation import OscillationTree
 
 
 def main(
@@ -19,7 +19,7 @@ def main(
     tree = OscillationTree.from_file(graph_gml, attrs_json)
     if accumulate:
         tree.accumulate_visits_and_rewards()
-    
+
     print("Constructing complexity graph...")
 
     from circuitree.viz import complexity_layout

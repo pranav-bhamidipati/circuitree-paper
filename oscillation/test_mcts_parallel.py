@@ -1,5 +1,5 @@
 from typing import Optional
-from models.oscillation.oscillation_parallel import *
+from oscillation.oscillation_parallel import *
 from multiprocessing import Pool
 from pathlib import Path
 from circuitree.parallel import TranspositionTable
@@ -85,7 +85,4 @@ def main(
 if __name__ == "__main__":
     # data_loc = Path("data/oscillation/bfs_230710_hpc")
     data_loc = Path("data/oscillation/230713_transposition_table_hpc.parquet")
-    main(
-        data_loc=data_loc,
-        load_kw=dict(index=False)
-    )
+    main(data_loc=data_loc, load_kw=dict(index=False))

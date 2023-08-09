@@ -5,7 +5,7 @@ import pandas as pd
 from pathlib import Path
 import seaborn as sns
 
-from models.oscillation.oscillation import OscillationTree
+from oscillation.oscillation import OscillationTree
 
 
 def main(

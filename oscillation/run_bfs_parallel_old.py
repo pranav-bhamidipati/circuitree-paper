@@ -12,7 +12,7 @@ from psutil import cpu_count
 from uuid import uuid4
 
 
-# from models.oscillation.oscillation import TFNetworkModel, OscillationTreeBase
+# from oscillation.oscillation import TFNetworkModel, OscillationTreeBase
 from oscillation import TFNetworkModel, OscillationTree
 
 import ray
@@ -179,7 +179,7 @@ def main(
         g: [Model.remote(genotype=g, initialize=True, dt=dt_seconds, nt=nt, **kw)]
         for g in job_counter
     }
-    n_models_available = sum(len(m) for m in models.values())
+    n_models_available = sum(len(m) for m in values())
     print(f"Num. workers: {n_workers}")
     print(f"Num. models available to run: {n_models_available}")
     print(f"Num. unique models being simulated: {len(job_counter)}")
@@ -188,7 +188,7 @@ def main(
     futures = [ref.future() for ref in sim_refs]
     futures_as_completed = as_completed(futures)
     while (sum(job_counter.values()) > 0) or futures:
-        n_models_available = sum(len(m) for m in models.values())
+        n_models_available = sum(len(m) for m in values())
         print(f"Num. unique models being simulated: {len(job_counter)}")
         print(
             f"Currently {n_workers} workers running {n_models_available} models "

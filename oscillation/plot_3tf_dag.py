@@ -3,7 +3,7 @@ from pathlib import Path
 
 import networkx as nx
 import circuitree as ct
-from models.oscillation.oscillation import OscillationTree
+from oscillation.oscillation import OscillationTree
 
 import matplotlib.pyplot as plt
 import numpy as np

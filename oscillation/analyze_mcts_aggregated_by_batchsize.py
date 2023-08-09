@@ -3,7 +3,7 @@ from datetime import date
 from pathlib import Path
 from typing import Optional
 
-from models.oscillation.oscillation import OscillationTree
+from oscillation.oscillation import OscillationTree
 
 
 def main(
