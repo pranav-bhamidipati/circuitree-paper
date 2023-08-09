@@ -7,7 +7,7 @@ from dask.distributed import Lock, Client, LocalCluster, as_completed, Future
 import numpy as np
 from pathlib import Path
 
-from oscillation import TFNetworkModel
+from oscillation.oscillation import TFNetworkModel
 from oscillation_parallel import OscillationParallelTree
 
 

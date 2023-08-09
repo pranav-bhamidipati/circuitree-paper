@@ -13,7 +13,7 @@ from uuid import uuid4
 
 
 # from oscillation.oscillation import TFNetworkModel, OscillationTreeBase
-from oscillation import TFNetworkModel, OscillationTree
+from oscillation.oscillation import TFNetworkModel, OscillationTree
 
 import ray
 

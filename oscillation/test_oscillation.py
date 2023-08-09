@@ -2,7 +2,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from pathlib import Path
 
-from oscillation import TFNetworkModel
+from oscillation.oscillation import TFNetworkModel
 
 
 def main(
@@ -22,7 +22,7 @@ def main(
     half_nt = len(t) // 2
     model = TFNetworkModel(code, seed=0)
     model.initialize_ssa(seed=0, dt=dt, nt=len(t))
-    
+
     pop0s = []
     param_sets = []
     for _ in range(100000):
@@ -37,7 +37,9 @@ def main(
     y_t = y_t[..., 3:6]
     acorr = model.get_autocorrelation(y_t)
     nt_acorr = acorr.shape[1]
-    indices, freqs, peaks = model.get_acf_minima_and_results(t, y_t, freqs=True, indices=True)
+    indices, freqs, peaks = model.get_acf_minima_and_results(
+        t, y_t, freqs=True, indices=True
+    )
 
     fig1 = plt.figure(figsize=(4, 3))
     for i in range(n_threads):

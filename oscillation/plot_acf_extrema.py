@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 
-from oscillation import (
+from oscillation.oscillation import (
     autocorrelate,
     compute_lowest_minima,
     binomial9_kernel,

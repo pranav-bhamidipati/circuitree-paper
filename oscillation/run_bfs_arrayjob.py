@@ -13,7 +13,7 @@ from time import perf_counter
 from typing import Optional
 from uuid import uuid4
 
-from oscillation import TFNetworkModel
+from oscillation.oscillation import TFNetworkModel
 
 
 def run_batch_and_save(
@@ -249,8 +249,10 @@ def main(
 
     import os
 
-    run_id = int(os.environ.get("SLURM_ARRAY_TASK_ID")) + int(os.environ.get("JOB_QUEUE_FIRST_INDEX"))
-    
+    run_id = int(os.environ.get("SLURM_ARRAY_TASK_ID")) + int(
+        os.environ.get("JOB_QUEUE_FIRST_INDEX")
+    )
+
     save_dir = save_dir.resolve().absolute()
     save_dir.mkdir(exist_ok=True)
     log_dir = log_dir.resolve().absolute()
