@@ -11,7 +11,7 @@ from time import perf_counter
 from typing import Iterable, Optional
 from uuid import uuid4
 
-from oscillation.oscillation import TFNetworkModel, OscillationTree
+from oscillation import TFNetworkModel, OscillationTree
 from gillespie import convert_params_to_sampled_quantities
 
 
@@ -327,7 +327,7 @@ if __name__ == "__main__":
         batch_size=10,
         nt=360,
         dt_seconds=20.0,
-        # n_workers=4,
+        n_workers=14,
         print_every=10,
         shuffle_seed=2023,
     )

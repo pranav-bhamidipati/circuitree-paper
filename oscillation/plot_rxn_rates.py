@@ -11,9 +11,11 @@ def main(
     nan_val: float = 0.0,
     dt_seconds: float = 20.0,
     quantiles: tuple = (0.95, 0.99, 0.999, 0.9999),
+    nt_sampled: int = 360,
+    nt_total: int = 2_000,
     save: bool = False,
     save_dir: Path = None,
-    figsize: tuple[float, float] = (4, 3),
+    figsize: tuple[float, float] = (5, 3.5),
     fmt: str = "png",
     dpi: int = 300,
 ):
@@ -33,29 +35,31 @@ def main(
     df["complexity"] = df["complexity"].where(df["state"] != "*ABC::", 0)
     df["complexity"] = pd.Categorical(df["complexity"], ordered=True)
 
+    df["runtime_secs"] = df["runtime_secs"] / nt_sampled * nt_total
     df["log_runtime_secs"] = np.log10(df["runtime_secs"])
     df["reactions_per_min"] = df["iterations_per_timestep"] * 60.0 / dt_seconds
-    df["log_reactions_per_min"] = np.log10(df["iterations_per_timestep"])
-    df["log_reactions_per_min"] = df["log_reactions_per_min"].replace(-np.inf, nan_val)
+    df["reactions_per_min"] = np.maximum(df["reactions_per_min"], 10**nan_val)
+    df["log_reactions_per_min"] = np.log10(df["reactions_per_min"])
+    # df["log_reactions_per_min"] = df["log_reactions_per_min"].replace(-np.inf, nan_val)
 
-    # To plot:
-    # - [done] runtime vs reaction rates
-    # - [done] effect of complexity (ECDFs)
-    # - scatterplot reaction rates vs parameters
-    # - [corner plots for any important parameters]
-    # - Expected runtime vs batch size
-    # - Expected runtime vs batch size with reaction rate cutoff
-    #    - quantiles - 0.95, 0.99, 0.999, 0.9999
-    #    - 50_000 reactions per minute
+    reaction_quantiles = df["reactions_per_min"].quantile(quantiles)
+    q_labels = [f"{100 * q:.2f}".rstrip("0").rstrip(".") + "%" for q in quantiles]
+    q_colors = sns.color_palette("pastel", n_colors=len(quantiles))
 
-    reaction_quantiles = df["log_reactions_per_min"].quantile(quantiles)
     fig, ax = plt.subplots(figsize=figsize)
-    sns.histplot(data=df, x="log_reactions_per_min", ax=ax)
-    plt.xlabel(r"$\log_{10}$(reactions/min)")
+    sns.histplot(data=df, x="reactions_per_min", log_scale=True, ax=ax)
+    plt.xlabel(r"Reaction rate (min$^{-1}$)")
     ymin, ymax = plt.ylim()
-    line_kw = dict(ymin=ymin, ymax=ymax, color="gray", linestyles="dashed", lw=1)
-    for q in reaction_quantiles:
-        plt.vlines(q, **line_kw)
+    line_kw = dict(
+        ymin=ymin,
+        ymax=ymax,
+        # color="gray",
+        linestyles="dashed",
+        lw=1,
+    )
+    for q, q_label, q_color in zip(reaction_quantiles, q_labels, q_colors):
+        plt.vlines(q, label=q_label, color=q_color, **line_kw)
+    plt.legend(title="Percentile")
     plt.ylim(ymin, ymax)
     sns.despine()
     plt.tight_layout()
@@ -66,8 +70,26 @@ def main(
         plt.savefig(fname, dpi=dpi)
 
     fig, ax = plt.subplots(figsize=figsize)
-    sns.ecdfplot(data=df, x="log_reactions_per_min", hue="complexity", ax=ax)
-    plt.xlabel(r"$\log_{10}$(reactions/min)")
+    sns.histplot(
+        data=df, x="reactions_per_min", y="runtime_secs", log_scale=(True, True), ax=ax
+    )
+    plt.xlabel(r"Reaction rate (min$^{-1}$)")
+    plt.ylabel(r"Simulation time (s)")
+    sns.despine()
+    plt.tight_layout()
+
+    if save:
+        fname = (
+            save_dir.joinpath(f"runtime_vs_reaction_rate.{fmt}").resolve().absolute()
+        )
+        print(f"Saving figure to: {fname}")
+        plt.savefig(fname, dpi=dpi)
+
+    fig, ax = plt.subplots(figsize=figsize)
+    sns.ecdfplot(
+        data=df, x="reactions_per_min", hue="complexity", log_scale=True, ax=ax
+    )
+    plt.xlabel(r"Reaction rate (min$^{-1}$)")
     sns.despine()
     plt.tight_layout()
 
@@ -81,8 +103,8 @@ def main(
         plt.savefig(fname, dpi=dpi)
 
     fig, ax = plt.subplots(figsize=figsize)
-    sns.ecdfplot(data=df, x="log_runtime_secs", hue="complexity", ax=ax)
-    plt.xlabel(r"$\log_{10}$(runtime) (seconds)")
+    sns.ecdfplot(data=df, x="runtime_secs", hue="complexity", log_scale=True, ax=ax)
+    plt.xlabel(r"Simulation time (s)")
     sns.despine()
     plt.tight_layout()
 
@@ -93,27 +115,28 @@ def main(
         print(f"Saving figure to: {fname}")
         plt.savefig(fname, dpi=dpi)
 
-    fig = plt.figure(figsize=(figsize[0] * 3, figsize[1] * 3))
-    sampled_param_names = [
-        "log10_kd_1",
-        "kd_2_1_ratio",
-        "km_unbound",
-        "km_act",
-        "nlog10_km_rep_unbound_ratio",
-        "kp",
-        "gamma_m",
-        "gamma_p",
-    ]
-    for i, param_name in enumerate(sampled_param_names):
+    fig = plt.figure(figsize=(figsize[0] * 2, figsize[1] * 2))
+    sampled_params = {
+        "log10_kd_1": r"$\log_{10}K_d^{(1)}$",
+        "kd_2_1_ratio": r"$K_d^{(2)}/K_d^{(1)}$",
+        "km_unbound": r"$k_0$",
+        "km_act": r"$k_a$",
+        "nlog10_km_rep_unbound_ratio": r"$-\log_{10}(k_r/k_0)$",
+        "kp": r"$k_p$",
+        "gamma_m": r"$\gamma_m$",
+        "gamma_p": r"$\gamma_p$",
+    }
+    for i, (param_name, param_repr) in enumerate(sampled_params.items()):
         ax = fig.add_subplot(3, 3, i + 1)
         sns.histplot(
             data=df,
-            x="log_reactions_per_min",
-            y=param_name,
+            x=param_name,
+            y="reactions_per_min",
             ax=ax,
+            log_scale=(False, True),
         )
-        ax.set_xlabel(r"$\log_{10}$(reactions/min)")
-        ax.set_ylabel(param_name)
+        ax.set_xlabel(param_repr)
+        ax.set_ylabel(r"Reaction rate (min$^{-1}$)")
         sns.despine()
     plt.tight_layout()
 
@@ -130,11 +153,13 @@ def main(
         x="gamma_m",
         y="log10_kd_1",
         hue="log_reactions_per_min",
-        s=2,
+        s=1,
         linewidth=0,
         palette=palette,
         ax=ax,
     )
+    ax.set_xlabel(sampled_params["gamma_m"])
+    ax.set_ylabel(sampled_params["log10_kd_1"])
     norm = plt.Normalize(
         df["log_reactions_per_min"].min(), df["log_reactions_per_min"].max()
     )
@@ -143,7 +168,7 @@ def main(
 
     # Remove the legend and add a colorbar
     ax.get_legend().remove()
-    fig.colorbar(sm, ax=ax)
+    fig.colorbar(sm, ax=ax, label=r"$\log_{10}$(reaction rate (min$^{-1}$)")
     sns.despine()
     plt.tight_layout()
 
@@ -165,6 +190,7 @@ def main(
     colors = [hi_color if p else lo_color for p in top_1pct]
     alphas = np.array([0.1, 1.0])[top_1pct.astype(int)]
     sizes = np.array([2, 4])[top_1pct.astype(int)]
+    plt.title(r"Top 1% of reaction rates")
     sns.scatterplot(
         data=df,
         x="gamma_m",
@@ -175,8 +201,8 @@ def main(
         linewidth=0,
         ax=ax,
     )
-
-    # Remove the legend
+    ax.set_xlabel(sampled_params["gamma_m"])
+    ax.set_ylabel(sampled_params["log10_kd_1"])
     sns.despine()
     plt.tight_layout()
 
@@ -191,8 +217,8 @@ def main(
 
 
 if __name__ == "__main__":
-    data_dir = Path("data/oscillation/n_iter")
-    save_dir = Path("figures/oscillation/n_iter")
+    data_dir = Path("data/oscillation/230808_rxn_rate")
+    save_dir = Path("figures/oscillation/reaction_rates")
     save_dir.mkdir(exist_ok=True)
     main(
         data_dir=data_dir,
