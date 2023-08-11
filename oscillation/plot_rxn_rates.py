@@ -153,7 +153,7 @@ def main(
         x="gamma_m",
         y="log10_kd_1",
         hue="log_reactions_per_min",
-        s=1,
+        s=3,
         linewidth=0,
         palette=palette,
         ax=ax,
@@ -189,7 +189,7 @@ def main(
     lo_color = plt.get_cmap("gray")(0.5)
     colors = [hi_color if p else lo_color for p in top_1pct]
     alphas = np.array([0.1, 1.0])[top_1pct.astype(int)]
-    sizes = np.array([2, 4])[top_1pct.astype(int)]
+    sizes = np.array([3, 6])[top_1pct.astype(int)]
     plt.title(r"Top 1% of reaction rates")
     sns.scatterplot(
         data=df,
@@ -217,8 +217,10 @@ def main(
 
 
 if __name__ == "__main__":
-    data_dir = Path("data/oscillation/230808_rxn_rate")
-    save_dir = Path("figures/oscillation/reaction_rates")
+    # data_dir = Path("data/oscillation/230808_rxn_rate")
+    # save_dir = Path("figures/oscillation/reaction_rates")
+    data_dir = Path("data/oscillation/230810_reaction_rate")
+    save_dir = Path("figures/oscillation/230810_reaction_rates")
     save_dir.mkdir(exist_ok=True)
     main(
         data_dir=data_dir,

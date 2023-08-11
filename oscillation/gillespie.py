@@ -905,6 +905,11 @@ class GillespieSSA:
 
         return pop0s, param_sets, y_ts
 
+    def run_n_iter_with_params(self, pop0, params):
+        """ """
+        ssa_params = self.package_params_for_ssa(params)
+        return self.gillespie_n_iter(pop0, *ssa_params)
+
     def run_n_iter_random(self):
         """ """
         pop0, params = self.draw_random_initial_and_params()
