@@ -29,17 +29,29 @@ def _compute_batch_runtime_metrics(
     # Compute the runtime of each batch, applying the threshold
     runtimes_masked = ma.masked_array(runtimes, mask=mask)
     batch_runtimes = runtimes_masked[bootstrap_indices].max(axis=1).compressed()
+    rt_q5, rt_q95 = np.nanquantile(batch_runtimes, q=(0.05, 0.95))
 
-    q5, q95 = np.nanquantile(batch_runtimes, q=(0.05, 0.95))
+    # Compute the sampling rate of each batch, applying the threshold
+    batch_size = bootstrap_indices.shape[1]
+    sampling_rates = batch_size * 60.0 / batch_runtimes
+    sr_q5, sr_q95 = np.nanquantile(sampling_rates, q=(0.05, 0.95))
+
     return {
         "rate_threshold": rate_threshold,
-        "mean": np.nanmean(batch_runtimes),
-        "std": np.nanstd(batch_runtimes),
-        "median": np.nanmedian(batch_runtimes),
-        "min": np.nanmin(batch_runtimes),
-        "max": np.nanmax(batch_runtimes),
-        "q5": q5,
-        "q95": q95,
+        "runtime_mean": np.nanmean(batch_runtimes),
+        "runtime_std": np.nanstd(batch_runtimes),
+        "runtime_median": np.nanmedian(batch_runtimes),
+        "runtime_min": np.nanmin(batch_runtimes),
+        "runtime_max": np.nanmax(batch_runtimes),
+        "runtime_q5": rt_q5,
+        "runtime_q95": rt_q95,
+        "sampling_rate_mean": np.nanmean(sampling_rates),
+        "sampling_rate_std": np.nanstd(sampling_rates),
+        "sampling_rate_median": np.nanmedian(sampling_rates),
+        "sampling_rate_min": np.nanmin(sampling_rates),
+        "sampling_rate_max": np.nanmax(sampling_rates),
+        "sampling_rate_q5": sr_q5,
+        "sampling_rate_q95": sr_q95,
     }
 
 
@@ -67,7 +79,7 @@ def main(
     data_dir: Path,
     n_bootstraps: int = 1_000_000,
     batch_sizes: tuple[int, ...] = (1, 5, 10, 20, 50, 100),
-    threshold_lim: tuple[float, ...] = (700_000, 10_000),
+    threshold_lim: tuple[float, ...] = (10_000, 700_000),
     n_thresholds: int = 21,
     dt_seconds: float = 20.0,
     nan_val: float = 0.0,
@@ -171,17 +183,17 @@ def main(
 
         plt.fill_between(
             batch_data["rate_threshold"],
-            batch_data["min"],
-            batch_data["max"],
+            batch_data["runtime_min"],
+            batch_data["runtime_max"],
             color=blues[0],
         )
         plt.fill_between(
             batch_data["rate_threshold"],
-            batch_data["q5"],
-            batch_data["q95"],
+            batch_data["runtime_q5"],
+            batch_data["runtime_q95"],
             color=blues[1],
         )
-        sns.lineplot(y="mean", color=blues[3], **opts)
+        sns.lineplot(y="runtime_mean", color=blues[3], **opts)
 
         # sns.lineplot(y="q5", label="q5", **opts)
         # sns.lineplot(y="mean", label="mean", **opts)
@@ -200,10 +212,59 @@ def main(
         print(f"Writing to: {fpath}")
         plt.savefig(fpath, dpi=dpi)
 
+    fig = plt.figure(figsize=figsize)
+    for i, batch_size in enumerate(batch_sizes):
+        batch_data = df_bs.loc[df_bs["batch_size"] == batch_size]
+        ax = fig.add_subplot(*plot_shape, i + 1)
+        opts = dict(data=batch_data, x="rate_threshold", ax=ax, errorbar=None)
+
+        ax.set_title(f"Batch size: {batch_size}")
+        ax.set_xscale("log")
+        ax.set_xlim(threshold_lim)
+        ax.set_xlabel(r"Reaction rate cutoff (min$^{-1}$)")
+        ax.set_ylabel("Mean sampling rate (samples $min^{-1}$)")
+        ax.set_yscale("log")
+        ax.set_ylim(1.0e-1, 1.1e3)
+
+        blues = sns.color_palette("Blues", 4)
+
+        plt.fill_between(
+            batch_data["rate_threshold"],
+            batch_data["sampling_rate_min"],
+            batch_data["sampling_rate_max"],
+            color=blues[0],
+        )
+        plt.fill_between(
+            batch_data["rate_threshold"],
+            batch_data["sampling_rate_q5"],
+            batch_data["sampling_rate_q95"],
+            color=blues[1],
+        )
+        sns.lineplot(y="sampling_rate_mean", color=blues[3], **opts)
+
+        # sns.lineplot(y="q5", label="q5", **opts)
+        # sns.lineplot(y="mean", label="mean", **opts)
+        # sns.lineplot(y="q95", label="q95", **opts)
+        # sns.lineplot(y="max", label="max", **opts)
+
+    plt.tight_layout()
+
+    if save:
+        save_dir = Path(save_dir)
+        fpath = (
+            save_dir.joinpath(f"sampling_rate_with_rxn_rate_threshold.{fmt}")
+            .resolve()
+            .absolute()
+        )
+        print(f"Writing to: {fpath}")
+        plt.savefig(fpath, dpi=dpi)
+
 
 if __name__ == "__main__":
-    data_dir = Path("data/oscillation/230808_rxn_rate")
-    save_dir = Path("figures/oscillation/230808_rxn_rate")
+    # data_dir = Path("data/oscillation/230808_rxn_rate")
+    # save_dir = Path("figures/oscillation/230808_rxn_rate")
+    data_dir = Path("data/oscillation/230810_reaction_rate")
+    save_dir = Path("figures/oscillation/230810_reaction_rates")
     save_dir.mkdir(exist_ok=True)
     main(
         data_dir=data_dir,
