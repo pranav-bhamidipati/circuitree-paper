@@ -1,10 +1,11 @@
+from datetime import date
 import h5py
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from pathlib import Path
 
-from oscillation.oscillation import (
+from oscillation import (
     autocorrelate,
     compute_lowest_minima,
     binomial9_kernel,
@@ -41,9 +42,9 @@ def plot_copy_number(
     dpi,
     fmt,
     fig=None,
-    suffix="",
     plot_motifs=(),
     suptitle=None,
+    suffix="",
     **kwargs,
 ):
     nplot, n_species, nt = data.shape
@@ -77,11 +78,11 @@ def plot_copy_number(
     plt.tight_layout()
 
     if save:
-        fname = (
-            plot_dir.joinpath(f"highest_acfx_traces{suffix}.{fmt}").resolve().absolute()
-        )
-        print("Writing to:", fname)
-        plt.savefig(fname, dpi=dpi)
+        today = date.today().strftime("%y%m%d")
+        fname = f"{today}_highest_acfx_traces{suffix}.{fmt}"
+        fpath = plot_dir.joinpath(fname).resolve().absolute()
+        print("Writing to:", fpath)
+        plt.savefig(fpath, dpi=dpi)
 
 
 def plot_acf(
@@ -98,11 +99,11 @@ def plot_acf(
     dpi,
     fmt,
     fig=None,
-    suffix="",
     plot_motifs=(),
     locs_compare=None,
     extrema_compare=None,
     suptitle=None,
+    suffix="",
     **kwargs,
 ):
     nplot, n_species, nt = data.shape
@@ -170,11 +171,11 @@ def plot_acf(
     plt.tight_layout()
 
     if save:
-        fname = (
-            plot_dir.joinpath(f"highest_acfx_acorrs{suffix}.{fmt}").resolve().absolute()
-        )
-        print("Writing to:", fname)
-        plt.savefig(fname, dpi=dpi)
+        today = date.today().strftime("%y%m%d")
+        fname = f"{today}_highest_acfx_acorrs{suffix}.{fmt}"
+        fpath = plot_dir.joinpath(fname).resolve().absolute()
+        print("Writing to:", fpath)
+        plt.savefig(fpath, dpi=dpi)
 
 
 def main(
@@ -185,6 +186,7 @@ def main(
     save=False,
     dpi=300,
     fmt="png",
+    suffix="",
 ):
     nplot = prows * pcols
     with h5py.File(data_fpath, "r") as f:
@@ -229,16 +231,16 @@ def main(
         dpi=dpi,
         fmt=fmt,
         plot_motifs=plot_motifs,
-        suffix="_230608",
+        suffix=suffix,
     )
 
     plot_copy_number(
-        suptitle=r"Runs with the highest reward - Copy number vs $t$ (mins)",
+        suptitle=r"Highest reward - Copy number vs $t$ (mins)",
         # suptitle=r"3-TF circuits with the most oscillating runs - Copy number vs $t$ (mins)",
         **plot_data,
     )
     plot_acf(
-        suptitle=r"Runs with the highest reward - Autocorrelation vs $t-t'$ (mins)",
+        suptitle=r"Highest reward - Autocorrelation vs $t-t'$ (mins)",
         # suptitle=r"3-TF circuits with the most oscillating runs - Autocorrelation vs $t-t'$ (mins)",
         **plot_data,
     )
@@ -248,12 +250,14 @@ def main(
 
 if __name__ == "__main__":
     data_fpath = Path(
-        "~/git/circuitree/data/oscillation/bfs/top_oscillating_runs.hdf5"
-        # "~/git/circuitree/data/oscillation/bfs/top_oscillating_states.hdf5"
-    ).expanduser()
-    plot_dir = Path("~/git/circuitree/figures/oscillation").expanduser()
+        "data/oscillation/bfs_230710_hpc/top_oscillating_runs_ABC::AAa_ABi_BBa_BCi_CAi_CCa.hdf5"
+    )
+    # data_fpath = Path("data/oscillation/bfs_230710_hpc/top_oscillating_states.hdf5")
+    # data_fpath = Path("data/oscillation/bfs_230710_hpc/top_oscillating_runs.hdf5")
+    plot_dir = Path("figures/oscillation")
     main(
         data_fpath,
         plot_dir,
         save=True,
+        suffix="_state_ABC::AAa_ABi_BBa_BCi_CAi_CCa",
     )
