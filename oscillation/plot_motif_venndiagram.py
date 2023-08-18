@@ -92,9 +92,9 @@ def main(
     any_motifs = reduce(lambda x, y: x | y, (df_osc[m] for m in motifs))
     n_osc_no_motifs = (~any_motifs).sum()
     plt.text(
-        x=0.1,
+        x=0.075,
         y=0.1,
-        s=f"No motifs\n{n_osc_no_motifs}",
+        s=f"No ring motifs\n{n_osc_no_motifs}",
         ha="center",
         va="bottom",
         size=8,

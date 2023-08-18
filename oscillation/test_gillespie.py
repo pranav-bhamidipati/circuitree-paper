@@ -1,5 +1,5 @@
 import numpy as np
-from oscillation.oscillation import TFNetworkModel
+from oscillation import TFNetworkModel
 from time import perf_counter
 import timeit
 

@@ -36,7 +36,7 @@ from circuitree.metrics import (
     # mcts_reward_nodes_and_modularity_estimate,
 )
 from circuitree.parallel import TranspositionTable
-from oscillation.oscillation_parallel import OscillationTreeParallel
+from oscillation_parallel import OscillationTreeParallel
 
 
 def run_search_and_save(

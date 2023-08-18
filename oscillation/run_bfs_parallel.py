@@ -9,7 +9,7 @@ from pathlib import Path
 from psutil import cpu_count
 from uuid import uuid4
 
-from oscillation.oscillation import TFNetworkModel, OscillationTree
+from oscillation import TFNetworkModel, OscillationTree
 
 import ray
 

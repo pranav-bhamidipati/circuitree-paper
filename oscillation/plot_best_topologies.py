@@ -5,7 +5,7 @@ import pandas as pd
 from pathlib import Path
 import seaborn as sns
 
-from oscillation.oscillation import OscillationTree
+from oscillation import OscillationTree
 
 
 def main(
@@ -157,5 +157,5 @@ if __name__ == "__main__":
         offset=0.8,
         auto_shrink=0.9,
         width=0.005,
-        plot_names=False,
+        # plot_names=False,
     )

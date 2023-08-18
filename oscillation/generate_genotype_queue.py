@@ -1,7 +1,7 @@
 from typing import Iterable, Optional
 import json
 from pathlib import Path
-from oscillation.oscillation import OscillationTree
+from oscillation import OscillationTree
 
 
 def main(

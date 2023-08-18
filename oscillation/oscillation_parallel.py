@@ -8,7 +8,7 @@ from typing import Any, Iterable, Optional
 import numpy as np
 
 from circuitree.parallel import MCTSResult, TranspositionTable
-from oscillation.oscillation import TFNetworkModel, OscillationTree
+from oscillation import TFNetworkModel, OscillationTree
 
 __all__ = ["OscillationTreeParallel"]
 

@@ -8,7 +8,7 @@ from scipy.signal import correlate
 from circuitree import SimpleNetworkTree
 
 try:
-    from oscillation.gillespie import (
+    from gillespie import (
         GillespieSSA,
         make_matrices_for_ssa,
         SAMPLING_RANGES,

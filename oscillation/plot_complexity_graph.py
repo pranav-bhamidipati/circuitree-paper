@@ -9,7 +9,7 @@ import numpy as np
 from pathlib import Path
 from typing import Optional
 
-from oscillation.oscillation import OscillationTree
+from oscillation import OscillationTree
 
 
 def main(

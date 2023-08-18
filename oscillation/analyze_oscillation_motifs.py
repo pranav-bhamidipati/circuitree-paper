@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 
-from oscillation.oscillation import OscillationTree
+from oscillation import OscillationTree
 
 
 def main(

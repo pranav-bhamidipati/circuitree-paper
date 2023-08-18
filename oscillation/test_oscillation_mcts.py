@@ -2,7 +2,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from pathlib import Path
 
-from oscillation.oscillation import OscillationTreeParallel
+from oscillation import OscillationTreeParallel
 
 
 def main(
