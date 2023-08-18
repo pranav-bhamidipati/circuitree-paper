@@ -2,10 +2,10 @@ from collections import Counter
 from functools import partial
 from itertools import repeat
 from multiprocessing.pool import Pool
+import numpy as np
 from threading import Lock
 from typing import Any, Iterable, Optional
-
-import numpy as np
+import warnings
 
 from circuitree.parallel import MCTSResult, TranspositionTable
 from oscillation import TFNetworkModel, OscillationTree
@@ -45,6 +45,10 @@ class OscillationTreeParallel(OscillationTree):
         read_only: bool = False,
         table_lock: Optional[Any] = None,
         bootstrap: bool = False,
+        warn_if_nan: bool = False,
+        handle_nan: str = "omit",
+        record_nans: bool = True,
+        nan_default: float = 0.0,
         **kwargs,
     ):
         if pool is None:
@@ -84,6 +88,13 @@ class OscillationTreeParallel(OscillationTree):
                 "Can only use bootstrap sampling with a read-only transposition table."
             )
 
+        self.warn_if_nan = warn_if_nan
+        self.handle_nan = handle_nan
+        self.nan_default = nan_default
+        self.record_nans = record_nans
+
+        self._nan_data = []
+
     @property
     def transposition_table(self):
         return self._transposition_table
@@ -100,14 +111,16 @@ class OscillationTreeParallel(OscillationTree):
         visit_num = self.visit_counter[genotype]
 
         if self.bootstrap:
-            rewards = self.transposition_table.draw_bootstrap_reward(
+            bootstrap_indices, rewards = self.transposition_table.draw_bootstrap_reward(
                 state=genotype, size=self.batch_size, rg=self.rg
             )
+
         else:
             n_recorded_visits = self.transposition_table.n_visits(genotype)
             start_idx = max(visit_num, n_recorded_visits)
             end_idx = max(visit_num + self.batch_size, n_recorded_visits)
             n_to_simulate = end_idx - start_idx
+            n_to_read = self.batch_size - n_to_simulate
 
             if n_to_simulate == 0:
                 sim_results = []
@@ -116,12 +129,11 @@ class OscillationTreeParallel(OscillationTree):
                 run_ssa = partial(_run_ssa, dt=self.dt, nt=self.nt)
                 sim_results = self.pool.map(run_ssa, states_and_seeds)
 
-            rewards = []
-            for i in range(self.batch_size - n_to_simulate):
-                visit = visit_num + i
-                r = self.transposition_table.get_reward(genotype, visit)
-                rewards.append(r)
-            rewards = rewards + [r[0] for r in sim_results]
+            visit_indices = np.arange(visit_num, visit_num + n_to_read)
+            rewards = [
+                self.transposition_table.get_reward(genotype, v) for v in visit_indices
+            ]
+            rewards.extend([r[0] for r in sim_results])
             rewards = np.array(rewards)
 
             if (not self.read_only) and (n_to_simulate > 0):
@@ -133,22 +145,77 @@ class OscillationTreeParallel(OscillationTree):
                     timeout=write_timeout,
                 )
 
-        raise NotImplementedError
+        rewards = np.array(rewards)
+        nan_rewards = np.isnan(rewards)
+        if nan_rewards.all():
+            if self.warn_if_nan:
+                warnings.warn(
+                    f"All rewards for {genotype} are nan. Re-running batch..."
+                )
+                return self.get_reward(genotype, write_timeout=write_timeout)
+        elif nan_rewards.any():
+            if self.warn_if_nan:
+                warnings.warn(f"Some rewards for {genotype} are nan.")
+            if self.handle_nan == "omit":
+                if self.warn_if_nan:
+                    warnings.warn(f"Omitting nans for reward calculation.")
+                reward = (rewards[~nan_rewards] > self.autocorr_threshold).mean()
+            elif self.handle_nan == "rerun":
+                if self.warn_if_nan:
+                    warnings.warn(f"Re-running batch...")
+                return self.get_reward(genotype, write_timeout=write_timeout)
+            elif self.handle_nan == "default":
+                if self.warn_if_nan:
+                    warnings.warn(
+                        f"Replacing nans with default value: {self.nan_default}."
+                    )
+                rewards[nan_rewards] = self.nan_default
+                reward = rewards.mean()
+            else:
+                raise ValueError(
+                    f"Unrecognized value for handle_nan: {self.handle_nan}"
+                )
+        else:
+            reward = rewards.mean()
 
-        ...
+        if self.record_nans and nan_rewards.any():
+            n_nans = nan_rewards.sum()
+            if self.bootstrap:
+                nan_data = {
+                    "genotype": [genotype] * n_nans,
+                    "indices": bootstrap_indices[nan_rewards],
+                }
+            else:
+                genotypes = [genotype] * n_nans
+                indices = []
+                seeds = []
+                pop0s = []
+                param_sets = []
+                for i, isnan in enumerate(nan_rewards):
+                    if not isnan:
+                        continue
+                    if i < n_to_read:
+                        indices.append(bootstrap_indices[i])
+                    else:
+                        sim_idx = i - n_to_read
+                        indices.append(-1)
+                        seeds.append(sim_results[sim_idx][2])
+                        pop0s.append(sim_results[sim_idx][4])
+                        param_sets.append(sim_results[sim_idx][5])
 
-        # Need to insert logic here to deal with nans in rewards!!
-        # Should take a parameter to decide what a nan means
-        #   - remove nan from batch and take mean of rest
-        #       - catch case of all nans and return 0 ?
-        #   - nan means re-run entire batch
-        #   - nan means re-run just the nan
+                nan_data = {
+                    "genotype": genotypes,
+                    "indices": np.array(indices),
+                    "seeds": np.array(seeds),
+                    "pop0s": np.array(pop0s),
+                    "param_sets": np.array(param_sets),
+                }
 
-        # *** Save nan runs' details for later inspection ***
+            self._register_nan_data(nan_data)
 
         self.visit_counter[genotype] += self.batch_size
 
-        return (np.array(rewards) > self.autocorr_threshold).mean()
+        return reward
 
     def _write_results(
         self,
@@ -168,3 +235,6 @@ class OscillationTreeParallel(OscillationTree):
                 lock = self.table_lock
         with lock(timeout=timeout):
             table[state].extend(list(rewards))
+
+    def _register_nan_data(self, nan_data: dict[str, list]):
+        self._nan_data.append(nan_data)

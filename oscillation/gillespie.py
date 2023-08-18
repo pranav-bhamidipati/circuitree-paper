@@ -828,13 +828,12 @@ class GillespieSSA:
             *ssa_params,
         )
         if not maxiter_ok:
-            where_nan = next(
-                (i for i, is_nan in enumerate(np.isnan(y_t)) if is_nan), -1
-            )
-            if where_nan != -1:
+            y_t_isnan = np.isnan(y_t)
+            if y_t_isnan.any():
+                nanstep = np.where(y_t_isnan)[0][0]
                 raise RuntimeError(
-                    f"Maximum number of iterations reached during time-step {where_nan} "
-                    f"of Gillespie simulation."
+                    f"Number of Gillespie steps at time-step {nanstep} exceeded"
+                    f" the maximum allowed number of {self.max_iter_per_timestep}."
                 )
         return y_t
 
@@ -866,10 +865,10 @@ class GillespieSSA:
         )
         return pop0, params
 
-    def run_with_params(self, pop0, params):
+    def run_with_params(self, pop0, params, maxiter_ok: bool = True):
         """ """
         ssa_params = self.package_params_for_ssa(params)
-        return self.gillespie_trajectory(pop0, *ssa_params)
+        return self.gillespie_trajectory(pop0, *ssa_params, maxiter_ok=maxiter_ok)
 
     def run_batch_with_params(self, pop0, params, n):
         """ """
@@ -886,11 +885,12 @@ class GillespieSSA:
             y_ts[i] = self.run_with_params(pop0s[i], param_sets[i])
         return y_ts
 
-    def run_random_sample(self):
+    def run_random_sample(self, maxiter_ok: bool = True):
         """ """
         pop0, params = self.draw_random_initial_and_params()
         ssa_params = self.package_params_for_ssa(params)
-        return pop0, params, self.gillespie_trajectory(pop0, *ssa_params)
+        y_t = self.gillespie_trajectory(pop0, *ssa_params, maxiter_ok=maxiter_ok)
+        return pop0, params, y_t
 
     def run_batch(self, n):
         """ """
