@@ -8,20 +8,12 @@ from scipy.signal import correlate
 from circuitree import SimpleNetworkTree
 from circuitree.parallel import DefaultFactoryDict
 
-try:
-    from oscillation.gillespie import (
-        GillespieSSA,
-        make_matrices_for_ssa,
-        SAMPLING_RANGES,
-        DEFAULT_PARAMS,
-    )
-except ModuleNotFoundError:
-    from gillespie import (
-        GillespieSSA,
-        make_matrices_for_ssa,
-        SAMPLING_RANGES,
-        DEFAULT_PARAMS,
-    )
+from gillespie import (
+    GillespieSSA,
+    make_matrices_for_ssa,
+    SAMPLING_RANGES,
+    DEFAULT_PARAMS,
+)
 
 
 class TFNetworkModel:

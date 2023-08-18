@@ -1,5 +1,5 @@
 from typing import Optional
-from oscillation.oscillation_parallel import *
+from oscillation_parallel import *
 from multiprocessing import Pool
 from pathlib import Path
 from circuitree.parallel import TranspositionTable

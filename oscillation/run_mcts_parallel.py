@@ -5,7 +5,7 @@ from pathlib import Path
 from psutil import cpu_count
 import ray
 
-from oscillation.oscillation_parallel import (
+from oscillation_parallel import (
     TranspositionTable,
     OscillationTreeParallel,
 )
