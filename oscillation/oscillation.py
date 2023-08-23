@@ -148,9 +148,9 @@ class OscillationTree(SimpleNetworkTree):
             self.save_nan_data(
                 rewards, model=model, y_t=y_t, pop0s=pop0s, param_sets=param_sets
             )
-            reward = np.nanmean(rewards)
+            reward = (rewards[~nan_rewards] > self.autocorr_threshold).mean()
         else:
-            reward = np.mean(rewards)
+            reward = np.mean(rewards > self.autocorr_threshold)
         return reward
 
     def save_nan_data(
