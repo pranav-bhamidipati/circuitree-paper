@@ -15,7 +15,7 @@ from oscillation import OscillationTree
 __all__ = ["OscillationTreeParallel"]
 
 
-def _run_ssa(visit, prots0, params, model: TFNetworkModel):
+def run_ssa(visit, prots0, params, model: TFNetworkModel):
     start = perf_counter()
     prots_t, reward = model.run_with_params_and_get_acf_minimum(
         prots0=prots0,
@@ -27,6 +27,31 @@ def _run_ssa(visit, prots0, params, model: TFNetworkModel):
     end = perf_counter()
     sim_time = end - start
     return reward, prots_t, sim_time
+
+
+def save_simulation_results_to_hdf(
+    model: TFNetworkModel,
+    visits: int,
+    rewards: list[float],
+    y_t: np.ndarray,
+    autocorr_threshold: float,
+    save_dir: Path,
+    prefix: str = "",
+    **kwargs,
+) -> None:
+    state = model.genotype
+    fname = f"{prefix}state_{state}_uid_{uuid4()}.hdf5"
+    fpath = Path(save_dir) / fname
+    with h5py.File(fpath, "w") as f:
+        # f.create_dataset("seed", data=seed)
+        f.create_dataset("visits", data=visits)
+        f.create_dataset("rewards", data=rewards)
+        f.create_dataset("y_t", data=y_t)
+        f.attrs["state"] = state
+        f.attrs["dt"] = model.dt
+        f.attrs["nt"] = model.nt
+        f.attrs["max_iter_per_timestep"] = model.max_iter_per_timestep
+        f.attrs["autocorr_threshold"] = autocorr_threshold
 
 
 class OscillationTreeParallel(OscillationTree, ParallelTree):
@@ -160,26 +185,25 @@ class OscillationTreeParallel(OscillationTree, ParallelTree):
         if self.save_dir is None:
             raise FileNotFoundError("No save directory specified")
 
-        state = model.genotype
-        fname = f"{prefix}state_{state}_uid_{uuid4()}.hdf5"
-        fpath = Path(self.save_dir) / fname
-        with h5py.File(fpath, "w") as f:
-            # f.create_dataset("seed", data=seed)
-            f.create_dataset("visits", data=visits)
-            f.create_dataset("rewards", data=rewards)
-            f.create_dataset("y_t", data=y_t)
-            f.attrs["state"] = state
-            f.attrs["dt"] = model.dt
-            f.attrs["nt"] = model.nt
-            f.attrs["max_iter_per_timestep"] = model.max_iter_per_timestep
-            f.attrs["autocorr_threshold"] = self.autocorr_threshold
+        save_simulation_results_to_hdf(
+            model=model,
+            visits=visits,
+            rewards=rewards,
+            y_t=y_t,
+            autocorr_threshold=self.autocorr_threshold,
+            save_dir=self.save_dir,
+            prefix=prefix,
+            **kwargs,
+        )
+
+    def simulate_visits(self, state, visits) -> tuple[list[float], dict[str, Any]]:
+        raise NotImplementedError
+
+    def save_results(self, data: dict[str, Any]) -> None:
+        raise NotImplementedError
 
 
-def simulate_visits(self, state, visits) -> tuple[list[float], dict[str, Any]]:
-    raise NotImplementedError
-
-
-class OscillationTreeParallelMP(OscillationTreeParallel):
+class OscillationTreeMP(OscillationTreeParallel):
     def __init__(
         self,
         *,
@@ -187,6 +211,8 @@ class OscillationTreeParallelMP(OscillationTreeParallel):
         nprocs: int = 1,
         **kwargs,
     ):
+        raise NotImplementedError
+
         super().__init__(**kwargs)
         self._pool = Pool(nprocs) if pool is None else pool
         self.n_procs = self.pool._processes
@@ -210,7 +236,7 @@ class OscillationTreeParallelMP(OscillationTreeParallel):
             max_iter_per_timestep=self.max_iter_per_timestep,
             initialize=True,
         )
-        sample_state = partial(_run_ssa, model=model)
+        sample_state = partial(run_ssa, model=model)
         input_args = [self.param_table[v] for v in visits]
         rewards, prots_t, sim_times = self.pool.starmap(sample_state, input_args)
         data = {
@@ -221,15 +247,3 @@ class OscillationTreeParallelMP(OscillationTreeParallel):
             "sim_times": sim_times,
         }
         return rewards, data
-
-
-class OscillationTreeParallelSLURM(OscillationTreeParallel):
-    def __init__(
-        self,
-        *args,
-        **kwargs,
-    ):
-        super().__init__(**kwargs)
-
-    def simulate_visits(self, state, visits) -> tuple[list[float], dict[str, Any]]:
-        ...

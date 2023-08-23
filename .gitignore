@@ -6,6 +6,9 @@ figures
 sacred
 arrayjobs
 
+# Redis server URL
+.redis-url
+
 # VS Code
 .vscode/
 
