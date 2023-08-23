@@ -11,7 +11,8 @@ from time import perf_counter
 from typing import Iterable, Optional
 from uuid import uuid4
 
-from oscillation import TFNetworkModel, OscillationTree
+from tf_network import TFNetworkModel
+from oscillation import OscillationTree
 
 
 def run_batch_and_save(

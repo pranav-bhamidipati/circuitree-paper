@@ -13,7 +13,7 @@ from time import perf_counter
 from typing import Optional
 from uuid import uuid4
 
-from oscillation import TFNetworkModel
+from tf_network import TFNetworkModel
 
 
 def run_batch_and_save(

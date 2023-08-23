@@ -1,3 +1,5 @@
+from itertools import cycle, islice, repeat, zip_longest
+from typing import Iterable, Optional
 from numba import njit, float64, int64
 import numpy as np
 
@@ -810,8 +812,16 @@ class GillespieSSA:
         """ """
         return _population_from_proteins(proteins, fill_value, self.m, self.n_species)
 
-    def gillespie_trajectory(self, population_0, *ssa_params, maxiter_ok: bool = True):
+    def gillespie_trajectory(
+        self,
+        population_0,
+        *ssa_params,
+        seed: Optional[int] = None,
+        maxiter_ok: bool = True,
+    ):
         """ """
+        if seed is not None:
+            self.rg = np.random.default_rng(seed)
         self.rg, y_t = gillespie_trajectory(
             self.rg,
             self.time_points,
@@ -865,45 +875,78 @@ class GillespieSSA:
         )
         return pop0, params
 
-    def run_with_params(self, pop0, params, maxiter_ok: bool = True):
+    def _random_seed_iterator(
+        self,
+        n: int,
+        seed_or_seeds: Optional[int | Iterable[int]] = None,
+    ):
+        if seed_or_seeds is None:
+            iter_seeds = islice(repeat(None), n)
+        elif isinstance(seed_or_seeds, int):
+            iter_seeds = range(seed_or_seeds, seed_or_seeds + n)
+        elif isinstance(seed_or_seeds, Iterable):
+            iter_seeds = islice(cycle(seed_or_seeds), n)
+        else:
+            raise TypeError("seed_or_seeds must be None, int, or Iterable[int]")
+        return iter_seeds
+
+    def run_with_params(
+        self, pop0, params, seed: Optional[int] = None, maxiter_ok: bool = True
+    ):
         """ """
         ssa_params = self.package_params_for_ssa(params)
-        return self.gillespie_trajectory(pop0, *ssa_params, maxiter_ok=maxiter_ok)
+        return self.gillespie_trajectory(
+            pop0, *ssa_params, seed=seed, maxiter_ok=maxiter_ok
+        )
 
-    def run_batch_with_params(self, pop0, params, n):
-        """ """
-        y_ts = np.zeros((n, self.nt, self.n_species)).astype(np.float64)
-        for i in range(n):
-            y_ts[i] = self.run_with_params(pop0, params)
-        return y_ts
-
-    def run_batch_with_params_vector(self, pop0s, param_sets):
-        """ """
-        n = len(pop0s)
-        y_ts = np.zeros((n, self.nt, self.n_species)).astype(np.float64)
-        for i in range(n):
-            y_ts[i] = self.run_with_params(pop0s[i], param_sets[i])
-        return y_ts
-
-    def run_random_sample(self, maxiter_ok: bool = True):
+    def run_random_sample(self, seed: Optional[int] = None, maxiter_ok: bool = True):
         """ """
         pop0, params = self.draw_random_initial_and_params()
         ssa_params = self.package_params_for_ssa(params)
-        y_t = self.gillespie_trajectory(pop0, *ssa_params, maxiter_ok=maxiter_ok)
+        y_t = self.gillespie_trajectory(
+            pop0, *ssa_params, seed=seed, maxiter_ok=maxiter_ok
+        )
         return pop0, params, y_t
 
-    def run_batch(self, n):
+    def run_batch(
+        self,
+        n: int,
+        seed_or_seeds: Optional[int | Iterable[int]] = None,
+        maxiter_ok: bool = True,
+    ):
         """ """
+        iter_seeds = self._random_seed_iterator(n, seed_or_seeds)
         pop0s = np.zeros((n, self.n_species)).astype(np.int64)
         param_sets = np.zeros((n, self.n_params)).astype(np.float64)
         y_ts = np.zeros((n, self.nt, self.n_species)).astype(np.float64)
-        for i in range(n):
-            pop0, params, y_t = self.run_random_sample()
+        for i, seed in enumerate(iter_seeds):
+            pop0, params, y_t = self.run_random_sample(seed=seed, maxiter_ok=maxiter_ok)
             pop0s[i] = pop0
             param_sets[i] = params
             y_ts[i] = y_t
 
         return pop0s, param_sets, y_ts
+
+    def run_batch_with_params(
+        self, pop0, params, n, seed_or_seeds: Optional[int | Iterable[int]] = None
+    ):
+        """ """
+        iter_seeds = self._random_seed_iterator(n, seed_or_seeds)
+        y_ts = np.zeros((n, self.nt, self.n_species)).astype(np.float64)
+        for i, seed in enumerate(iter_seeds):
+            y_ts[i] = self.run_with_params(pop0, params, seed=seed)
+        return y_ts
+
+    def run_batch_with_param_sets(
+        self, pop0s, param_sets, seed_or_seeds: Optional[int | Iterable[int]] = None
+    ):
+        """ """
+        n = len(pop0s)
+        iter_seeds = self._random_seed_iterator(n, seed_or_seeds)
+        y_ts = np.zeros((n, self.nt, self.n_species)).astype(np.float64)
+        for i, seed in enumerate(iter_seeds):
+            y_ts[i] = self.run_with_params(pop0s[i], param_sets[i], seed=seed)
+        return y_ts
 
     def run_n_iter_with_params(self, pop0, params):
         """ """
