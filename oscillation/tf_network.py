@@ -2,7 +2,7 @@ from circuitree import SimpleNetworkTree
 from numba import stencil, njit
 import numpy as np
 from scipy.signal import correlate
-from typing import Optional, Iterable
+from typing import Optional, Iterable, Sequence
 
 from gillespie import (
     GillespieSSA,
@@ -87,14 +87,14 @@ class TFNetworkModel:
 
     def initialize_ssa(
         self,
-        seed: int,
+        seed: Optional[int] = None,
         dt: Optional[float] = None,
         nt: Optional[int] = None,
         init_mean: float = 10.0,
         max_iter_per_timestep: Optional[int] = None,
         **kwargs,
     ):
-        seed = seed or self.seed
+        seed = self.seed if seed is None else seed
         dt = dt or self.dt
         nt = nt or self.nt
         max_iter_per_timestep = max_iter_per_timestep or self.max_iter_per_timestep
@@ -116,35 +116,41 @@ class TFNetworkModel:
             max_iter_per_timestep,
         )
 
-    def run_ssa_with_params(self, pop0, params):
-        return self.ssa.run_with_params(pop0, params)
+    def run_ssa_with_params(self, pop0, params, seed=None, maxiter_ok=True):
+        return self.ssa.run_with_params(pop0, params, seed=seed, maxiter_ok=maxiter_ok)
 
-    def run_batch_with_params(self, pop0, params, n):
+    def run_batch_with_params(self, pop0, params, n, seed=None, maxiter_ok=True):
         pop0 = np.asarray(pop0)
         params = np.asarray(params)
         is_vectorized = pop0.ndim == 2 and params.ndim == 2
         if is_vectorized:
-            return self.ssa.run_batch_with_param_sets(pop0, params)
+            return self.ssa.run_batch_with_param_sets(
+                pop0, params, seed=seed, maxiter_ok=maxiter_ok
+            )
         else:
-            return self.ssa.run_batch_with_params(pop0, params, n)
+            return self.ssa.run_batch_with_params(
+                pop0, params, n, seed=seed, maxiter_ok=maxiter_ok
+            )
 
-    def run_ssa_random_params(self):
-        pop0, params, y_t = self.ssa.run_random_sample()
+    def run_ssa_random_params(self, seed=None, maxiter_ok=True):
+        pop0, params, y_t = self.ssa.run_random_sample(seed=seed, maxiter_ok=maxiter_ok)
         return pop0, params, y_t
 
-    def run_batch_random(self, n_samples):
-        return self.ssa.run_batch(n_samples)
+    def run_batch_random(self, n_samples, seed=None, maxiter_ok=True):
+        if n_samples == 1:
+            return self.run_ssa_random_params(seed=seed, maxiter_ok=maxiter_ok)
+        return self.ssa.run_batch(n_samples, seed=seed, maxiter_ok=maxiter_ok)
 
-    def run_job(self, abs: bool = False, **kwargs):
-        """
-        Run the simulation with random parameters and default time-stepping.
-        For convenience, this returns the genotype ("state") and visit number in addition
-        to simulation results.
-        """
-        y_t, pop0, params, reward = self.run_ssa_and_get_acf_minima(
-            self.dt, self.nt, size=1, freqs=False, indices=False, abs=abs, **kwargs
-        )
-        return y_t, pop0, params, reward
+    # def run_job(self, abs: bool = False, **kwargs):
+    #     """
+    #     Run the simulation with random parameters and default time-stepping.
+    #     For convenience, this returns the genotype ("state") and visit number in addition
+    #     to simulation results.
+    #     """
+    #     y_t, pop0, params, reward = self.run_ssa_and_get_acf_minima(
+    #         self.dt, self.nt, size=1, freqs=False, indices=False, abs=abs, **kwargs
+    #     )
+    #     return y_t, pop0, params, reward
 
     def run_batch_job(self, batch_size: int, abs: bool = False, **kwargs):
         """
@@ -227,17 +233,35 @@ class TFNetworkModel:
         else:
             return minima
 
+    def run_with_params_and_get_acf_minimum(
+        self,
+        prots0: np.ndarray,
+        params: np.ndarray,
+        seed: Optional[int] = None,
+        abs: bool = False,
+        maxiter_ok: bool = True,
+    ):
+        """Run an initialized SSA with the given parameters and get the autocorrelation"""
+        pop0 = self.ssa.population_from_proteins(prots0)
+        y_t = self.run_ssa_with_params(pop0, params, seed=seed, maxiter_ok=maxiter_ok)
+        prots_t = y_t[..., self.m : self.m * 2]
+        if np.isnan(prots_t).any():
+            acf_minimum = np.nan
+        else:
+            acf_minimum = float(self.get_acf_minima(prots_t, abs=abs))
+        return acf_minimum
+
     def run_ssa_and_get_acf_minima(
         self,
         dt: Optional[float] = None,
         nt: Optional[int] = None,
-        seed: Optional[int] = None,
+        seed: Optional[int | Iterable[int]] = None,
         size: int = 1,
         freqs: bool = False,
         indices: bool = False,
         init_mean: float = 10.0,
         abs: bool = False,
-        pop0: Optional[np.ndarray] = None,
+        prots0: Optional[np.ndarray] = None,
         params: Optional[np.ndarray] = None,
         **kwargs,
     ):
@@ -246,47 +270,56 @@ class TFNetworkModel:
         autocorrelation-based reward.
         """
 
-        if all(arg is not None for arg in (seed, dt, nt)):
-            self.initialize_ssa(seed, dt, nt, init_mean)
+        if all(arg is not None for arg in (dt, nt)):
+            # If dt and nt are specified, initialize the SSA
+            self.initialize_ssa(None, dt, nt, init_mean)
             t = self.t
 
-        if (params is None) != (pop0 is None):
+        if (params is None) != (prots0 is None):
             raise ValueError("Either both or neither of params and pop0 must be given.")
 
-        elif (params is None) and (pop0 is None):
-            if size > 1:
-                pop0, params, y_t = self.run_batch_random(size)
-            else:
-                pop0, params, y_t = self.run_ssa_random_params()
+        elif (params is None) and (prots0 is None):
+            pop0, params, y_t = self.run_batch_random(size, seed=seed, **kwargs)
 
         else:
             size = np.atleast_2d(params).shape[0]
-            if size > 1:
-                y_t = self.run_batch_with_params(pop0, params, size)
+            if size == 1:
+                pop0 = self.ssa.population_from_proteins(prots0.flatten())
+                y_t = self.run_ssa_with_params(
+                    pop0, params.flatten(), seed=seed, **kwargs
+                )
             else:
-                y_t = self.run_ssa_with_params(pop0.flatten(), params.flatten())
+                pop0 = np.array([self.ssa.population_from_proteins(p) for p in prots0])
+                y_t = self.run_batch_with_params(
+                    pop0, params, size, seed=seed, **kwargs
+                )
 
-        mask_axes = y_t.ndim - 2, y_t.ndim - 1
-        not_nan_mask = np.logical_not(np.isnan(y_t).any(axis=mask_axes))
-
-        # Get autocorrelation results for all simulations. Catch nans that may arise if
-        # the simulation takes too long
-        if not (freqs or indices):
-            results = np.full(y_t.shape[:-2], np.nan)
-            results[not_nan_mask] = self.get_acf_minima(y_t[not_nan_mask], abs=abs)
-        else:
-            nan_result = (np.nan,) * (1 + freqs + indices)
-            not_nan_results = self.get_acf_minima_and_results(
-                t, y_t, freqs=freqs, indices=indices, abs=abs
-            )
-            results = [nan_result] * size
-            for i, result in zip(not_nan_mask.nonzero()[0], not_nan_results):
-                results[i] = result
-
-        prots0 = pop0[..., self.m : self.m * 2]
+        # Isolate just protein species
         prots_t = y_t[..., self.m : self.m * 2]
 
-        return prots_t, prots0, params, results
+        # Catch nans that may be returned if the simulation takes too long
+        mask_axes = prots_t.ndim - 2, prots_t.ndim - 1
+        not_nan_mask = np.logical_not(np.isnan(prots_t).any(axis=mask_axes))
+
+        # Get autocorrelation results for all simulations without NaNs
+        if not (freqs or indices):
+            acf_minima = np.full(prots_t.shape[:-2], np.nan)
+            acf_minima[not_nan_mask] = self.get_acf_minima(
+                prots_t[not_nan_mask], abs=abs
+            )
+        else:
+            nan_result = (np.nan,) * (1 + freqs + indices)
+            acf_minima = [nan_result] * size
+            if not_nan_mask.any():
+                not_nan_results = self.get_acf_minima_and_results(
+                    t, prots_t[not_nan_mask], freqs=freqs, indices=indices, abs=abs
+                )
+                for i, result in zip(not_nan_mask.nonzero()[0], not_nan_results):
+                    acf_minima[i] = result
+
+        prots0 = pop0[..., self.m : self.m * 2]
+
+        return prots_t, prots0, params, acf_minima
 
 
 def autocorrelate_mean0(arr1d_norm: np.ndarray[np.float_]) -> np.ndarray[np.float_]:
