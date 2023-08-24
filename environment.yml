@@ -1,0 +1,37 @@
+name: circuitree-paper
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10.7
+  - numpy=1.23.*
+  - networkx=3.1.*
+  - scipy=1.11.*
+  - matplotlib=3.7.*
+  - seaborn=0.12.*
+  - pandas=2.0.*
+  - more-itertools=10.1.*
+  - h5py=3.9.*
+  - tqdm=4.65.*
+  - psutil=5.9.*
+  - numba=0.57.*
+  - datashader=0.15.*
+  - matplotlib-venn=0.11.*
+  - dask=2023.8.*
+  - pyarrow=12.0.*
+  - celery[redis]=5.3.*
+  - black=23.7.*
+  - ipython=8.14.*
+  - fastapi=0.101.*
+  - ipykernel=6.25.*
+  - jupyterlab=4.0.*
+  - ipywidgets=8.1.*
+  - nodejs
+  - ipympl=0.9.*
+  - dask-labextension=7.*
+  - pip
+  - pip:
+    - circuitree>=0.6.3
+    - ray==2.6.*
+    - tables==3.8.*
+    - celery[redis]
