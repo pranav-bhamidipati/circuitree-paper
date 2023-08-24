@@ -81,23 +81,28 @@ class TFNetworkModel:
 
         self.ssa: GillespieSSA | None = None
         if initialize:
-            if any(arg is None for arg in (seed, dt, nt)):
-                raise ValueError("seed, dt and nt must be specified if initialize=True")
-            self.initialize_ssa(seed, dt, nt)
+            self.initialize_ssa(
+                self.seed, self.dt, self.nt, self.max_iter_per_timestep, **kwargs
+            )
 
     def initialize_ssa(
         self,
         seed: Optional[int] = None,
         dt: Optional[float] = None,
         nt: Optional[int] = None,
-        init_mean: float = 10.0,
         max_iter_per_timestep: Optional[int] = None,
+        init_mean: float = 10.0,
         **kwargs,
     ):
         seed = self.seed if seed is None else seed
         dt = dt or self.dt
         nt = nt or self.nt
         max_iter_per_timestep = max_iter_per_timestep or self.max_iter_per_timestep
+
+        if any(arg is None for arg in (seed, dt, nt, max_iter_per_timestep)):
+            raise ValueError(
+                "seed, dt, and max_iter_per_timestep must be specified for initialization"
+            )
         t = dt * np.arange(nt)
         self.t = t
 
@@ -240,7 +245,7 @@ class TFNetworkModel:
         seed: Optional[int] = None,
         abs: bool = False,
         maxiter_ok: bool = True,
-    ):
+    ) -> tuple[np.ndarray, float]:
         """Run an initialized SSA with the given parameters and get the autocorrelation"""
         pop0 = self.ssa.population_from_proteins(prots0)
         y_t = self.run_ssa_with_params(pop0, params, seed=seed, maxiter_ok=maxiter_ok)
@@ -249,7 +254,7 @@ class TFNetworkModel:
             acf_minimum = np.nan
         else:
             acf_minimum = float(self.get_acf_minima(prots_t, abs=abs))
-        return acf_minimum
+        return prots_t, acf_minimum
 
     def run_ssa_and_get_acf_minima(
         self,
