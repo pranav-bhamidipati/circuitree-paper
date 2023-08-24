@@ -1,8 +1,8 @@
 #!/bin/bash --login
 
-#SBATCH --time=12:00:00   # walltime
+#SBATCH --time=01:00:00   # walltime
 #SBATCH --ntasks=1   # number of processor cores per job in array (i.e. tasks)
-#SBATCH --array=0-39
+#SBATCH --array=0-9
 #SBATCH --mem-per-cpu=2G   # memory per CPU core
 #SBATCH -J "Circuitree-MCTS-Celery"   # job name
 #SBATCH --mail-user=pbhamidi@usc.edu   # email address
@@ -55,7 +55,8 @@ if [ "$SLURM_ARRAY_TASK_ID" == "0" ]; then
 fi
 
 echo "Launching celery worker"
-CMD="celery -A oscillation_parallel_celery.app worker -P processes"
+CMD="celery -A oscillation_parallel_celery.app worker --loglevel=info -P solo --hostname=worker$SLURM_ARRAY_TASK_ID@%h"
+# CMD="python /home/pbhamidi/git/circuitree-paper/oscillation/launch_celery_worker.py $SLURM_ARRAY_TASK_ID"
 echo $CMD
 $CMD
 
