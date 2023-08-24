@@ -152,9 +152,11 @@ class OscillationTreeCelery(OscillationTreeParallel):
     ):
         super().__init__(*args, **kwargs)
 
-        self.time_limit = time_limit
+        self.run_task = run_ssa
+        self.run_task.soft_time_limit = time_limit
+        # self.time_limit = time_limit
 
-        # Specify any attributes that should not be serialized when dumping to file
+        # # Specify any attributes that should not be serialized when dumping to file
         # self._non_serializable_attrs.append(...)
 
     def save_results(self, data: dict[str, Any]) -> None:
@@ -181,12 +183,17 @@ class OscillationTreeCelery(OscillationTreeParallel):
         )
 
         # Submit the tasks as a group and wait for them to finish, with a timeout
-        print()
-        task_group = group(run_ssa.s(*args, **kwargs) for args in input_args)
-        print(f"Submitting {len(input_args)} tasks to Celery.")
-        group_result = task_group.delay(soft_time_limit=self.time_limit)
-        print(f"Submitted. Waiting {self.time_limit} seconds for results.")
+        task_group = group(
+            [run_ssa.s(*args, **kwargs) for args in input_args],
+            # soft_time_limit=self.time_limit,
+        )
+        print(
+            f"Submitting {len(input_args)} tasks to Celery with time limit {self.time_limit}s."
+        )
+        group_result = task_group.delay()
         rewards = group_result.get()
         print(f"Got results: {rewards=}")
+
+        raise NotImplementedError("Finished")
 
         return rewards, {}
