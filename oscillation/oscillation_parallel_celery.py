@@ -38,7 +38,7 @@ app.conf["broker_transport_options"] = {
 }
 
 
-@app.task()
+@app.task(soft_time_limit=12)
 def run_ssa(
     seed: int,
     prots0: list[int],
@@ -184,11 +184,12 @@ class OscillationTreeCelery(OscillationTreeParallel):
 
         # Submit the tasks as a group and wait for them to finish, with a timeout
         task_group = group(
-            [run_ssa.s(*args, **kwargs) for args in input_args],
+            [self.run_task.s(*args, **kwargs) for args in input_args],
             # soft_time_limit=self.time_limit,
         )
         print(
-            f"Submitting {len(input_args)} tasks to Celery with time limit {self.time_limit}s."
+            f"Submitting {len(input_args)} tasks to Celery with time "
+            f"limit {self.run_task.soft_time_limit}s."
         )
         group_result = task_group.delay()
         rewards = group_result.get()
