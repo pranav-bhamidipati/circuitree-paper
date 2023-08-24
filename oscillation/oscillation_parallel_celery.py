@@ -53,10 +53,6 @@ def run_ssa(
     exist_ok: bool = False,
 ):
     try:
-        # for debugging
-        sleep(20)
-        return seed
-
         reward = _run_ssa(
             seed,
             prots0,
@@ -146,14 +142,14 @@ def _run_ssa(
 class OscillationTreeCelery(OscillationTreeParallel):
     def __init__(
         self,
-        time_limit: int = 600,  # seconds
+        # time_limit: int = 600,  # seconds
         *args,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
 
         self.run_task = run_ssa
-        self.run_task.soft_time_limit = time_limit
+        # self.run_task.soft_time_limit = time_limit
         # self.time_limit = time_limit
 
         # # Specify any attributes that should not be serialized when dumping to file
