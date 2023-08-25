@@ -159,6 +159,7 @@ class OscillationTreeParallel(OscillationTree, ParallelTree):
         self.visit_counter[state] += self.batch_size
 
         # Handle NaN rewards
+        rewards = np.array(rewards)
         nan_rewards = np.isnan(rewards)
         if nan_rewards.all():
             if self.warn_if_nan:
@@ -172,9 +173,8 @@ class OscillationTreeParallel(OscillationTree, ParallelTree):
             reward = np.mean(rewards > self.autocorr_threshold)
 
         self._done_callback(
-            self, state, list(range(visit, visit + self.batch_size)), rewards
+            self, state, list(range(visit, visit + self.batch_size)), rewards.tolist()
         )
-
         return reward
 
     def save_simulation_data(

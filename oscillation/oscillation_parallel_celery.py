@@ -24,24 +24,20 @@ app = Celery(
     broker_use_ssl=ssl.CERT_NONE,
     backend=_redis_url,
     redis_backend_use_ssl={"ssl_cert_reqs": ssl.CERT_NONE},
-    # broker_pool_limit=1,
     # broker_connection_retry_on_startup=False,
     broker_connection_retry_on_startup=True,
     worker_cancel_long_running_tasks_on_connection_loss=True,
-    # broker_connection_max_retries=10,
-    # redis_max_connections=1,
     task_compression="gzip",
 )
 app.conf["broker_transport_options"] = {
     "fanout_prefix": True,
     "fanout_patterns": True,
-    "max_connections": 2,
-    # "socket_keepalive": True,
+    "socket_keepalive": True,
 }
-logger = get_task_logger(__name__)
+task_logger = get_task_logger(__name__)
 
 
-@app.task(soft_time_limit=150)
+@app.task(soft_time_limit=90)
 def run_ssa(
     seed: int,
     prots0: list[int],
@@ -69,7 +65,7 @@ def run_ssa(
         exist_ok=exist_ok,
     )
     try:
-        logger.info(f"Running SSA with {seed=}, {state=}")
+        task_logger.info(f"Running SSA with {seed=}, {state=}")
         reward, sim_time = _run_ssa(**kwargs)
         return reward, sim_time
 
@@ -93,7 +89,7 @@ def _run_ssa(
     exist_ok: bool,
 ):
     start = perf_counter()
-    logger.info("Initializing model")
+    task_logger.info("Initializing model")
     model = TFNetworkModel(
         genotype=state,
         seed=seed,
@@ -102,7 +98,7 @@ def _run_ssa(
         max_iter_per_timestep=max_iter_per_timestep,
         initialize=True,
     )
-    logger.info("Running SSA...")
+    task_logger.info("Running SSA...")
     prots_t, autocorr_min = model.run_with_params_and_get_acf_minimum(
         prots0=np.array(prots0),
         params=np.array(params),
@@ -111,26 +107,26 @@ def _run_ssa(
     )
     end = perf_counter()
     sim_time = end - start
-    logger.info(f"Finished SSA in {sim_time:.4f}s")
+    task_logger.info(f"Finished SSA in {sim_time:.4f}s")
 
     # Handle results and save to data dir on worker-side
     save = False
     prefix = ""
     if np.isnan(autocorr_min):
-        logger.info("Simulation returned NaNs - maxiter_per_timestep exceeded.")
+        task_logger.info("Simulation returned NaNs - maxiter_per_timestep exceeded.")
         if save_nans:
             save = True
             prefix = "nan_"
         reward = -1.0  # serializable, unlike np.nan
     else:
-        logger.info(f"Finished with autocorr. minimum: {autocorr_min:.4f}")
+        task_logger.info(f"Finished with autocorr. minimum: {autocorr_min:.4f}")
         reward = float(-autocorr_min > autocorr_threshold)
         if reward:
             save = True
             prefix = "osc_"
-            logger.info("Oscillation detected, saving results.")
+            task_logger.info("Oscillation detected, saving results.")
         else:
-            logger.info("No oscillations detected.")
+            task_logger.info("No oscillations detected.")
 
     if save:
         _save_results(
@@ -167,7 +163,7 @@ def _save_results(
     if fpath.exists():
         if not exist_ok:
             raise FileExistsError(fpath)
-    logger.info(f"Saving results to {fpath}")
+    task_logger.info(f"Saving results to {fpath}")
     with h5py.File(fpath, "w") as f:
         f.create_dataset("y_t", data=prots_t)
         f.attrs["reward"] = reward
@@ -183,13 +179,13 @@ def _save_results(
 def save_ttable_every_n_iters(tree: OscillationTreeParallel, *args, **kwargs):
     """Callback function to save the transposition table every n iterations."""
     tree.iteration_counter += 1
-    print(f"Iteration {tree.iteration_counter}")
+    tree.logger.info(f"Iteration {tree.iteration_counter} complete.")
     i = tree.iteration_counter
     if i % tree.save_ttable_every == 0:
         ttable_fpath = Path(tree.save_dir) / f"iter{i}_trans_table.csv"
         sim_table_fpath = Path(tree.save_dir) / f"iter{i}_simtime_table.csv"
-        print(
-            f" --> Saving transposition table and simulation times to {tree.save_dir}"
+        tree.logger.info(
+            f"Saving transposition table and simulation times to {tree.save_dir}"
         )
         tree.ttable.to_csv(ttable_fpath, **kwargs)
         tree.simtime_table.to_csv(sim_table_fpath, **kwargs)
@@ -200,6 +196,7 @@ class OscillationTreeCelery(OscillationTreeParallel):
         self,
         save_ttable_every: int = 10,
         sim_time_table: Optional[TranspositionTable] = None,
+        logger: Any = None,
         *args,
         **kwargs,
     ):
@@ -211,13 +208,31 @@ class OscillationTreeCelery(OscillationTreeParallel):
         self.iteration_counter = 0
         self.save_ttable_every = save_ttable_every
 
+        if logger is None:
+            self.logger = task_logger
+        elif isinstance(logger, str) or isinstance(logger, Path):
+            import logging
+
+            self.logger = logging.getLogger(__name__)
+            self.logger.handlers.clear()
+            self.logger.setLevel(logging.INFO)
+            log_fmt = logging.Formatter(
+                "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+            )
+            logfile = Path(logger)
+            fh = logging.FileHandler(logfile, mode="w")
+            fh.setFormatter(log_fmt)
+            self.logger.addHandler(fh)
+        else:
+            self.logger = logger
+
         self.add_done_callback(save_ttable_every_n_iters)
 
         # self.run_task.soft_time_limit = time_limit
         # self.time_limit = time_limit
 
         # # Specify any attributes that should not be serialized when dumping to file
-        # self._non_serializable_attrs.append("_simulation_time_table")
+        self._non_serializable_attrs.extend(["_simulation_time_table", "logger"])
 
     @property
     def simtime_table(self):
