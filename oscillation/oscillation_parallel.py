@@ -150,7 +150,6 @@ class OscillationTreeParallel(OscillationTree, ParallelTree):
         n_to_simulate = self.batch_size - n_to_read
 
         rewards = self.ttable[state, visit : visit + n_to_read]
-
         if n_to_simulate > 0:
             sim_visits = visit + n_to_read + np.arange(n_to_simulate)
             sim_rewards, sim_data = self.simulate_visits(state, sim_visits)
@@ -171,6 +170,11 @@ class OscillationTreeParallel(OscillationTree, ParallelTree):
             reward = np.mean(rewards[~nan_rewards] > self.autocorr_threshold)
         else:
             reward = np.mean(rewards > self.autocorr_threshold)
+
+        self._done_callback(
+            self, state, list(range(visit, visit + self.batch_size)), rewards
+        )
+
         return reward
 
     def save_simulation_data(
@@ -195,6 +199,13 @@ class OscillationTreeParallel(OscillationTree, ParallelTree):
             prefix=prefix,
             **kwargs,
         )
+
+    @staticmethod
+    def _done_callback(self_obj, state, visits, rewards):
+        pass
+
+    def add_done_callback(self, callback, *args, **kwargs):
+        self._done_callback = partial(callback, *args, **kwargs)
 
     def simulate_visits(self, state, visits) -> tuple[list[float], dict[str, Any]]:
         raise NotImplementedError

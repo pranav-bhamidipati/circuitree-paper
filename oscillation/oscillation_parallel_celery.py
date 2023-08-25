@@ -6,7 +6,7 @@ import h5py
 import numpy as np
 from pathlib import Path
 import ssl
-from time import perf_counter, sleep
+from time import perf_counter
 from typing import Any, Optional
 
 from oscillation_parallel import OscillationTreeParallel
@@ -41,7 +41,7 @@ app.conf["broker_transport_options"] = {
 logger = get_task_logger(__name__)
 
 
-@app.task(soft_time_limit=12)
+@app.task(soft_time_limit=150)
 def run_ssa(
     seed: int,
     prots0: list[int],
@@ -180,10 +180,25 @@ def _save_results(
         f.attrs["sim_time"] = sim_time
 
 
+def save_ttable_every_n_iters(tree: OscillationTreeParallel, *args, **kwargs):
+    """Callback function to save the transposition table every n iterations."""
+    tree.iteration_counter += 1
+    print(f"Iteration {tree.iteration_counter}")
+    i = tree.iteration_counter
+    if i % tree.save_ttable_every == 0:
+        ttable_fpath = Path(tree.save_dir) / f"iter{i}_trans_table.csv"
+        sim_table_fpath = Path(tree.save_dir) / f"iter{i}_simtime_table.csv"
+        print(
+            f" --> Saving transposition table and simulation times to {tree.save_dir}"
+        )
+        tree.ttable.to_csv(ttable_fpath, **kwargs)
+        tree.simtime_table.to_csv(sim_table_fpath, **kwargs)
+
+
 class OscillationTreeCelery(OscillationTreeParallel):
     def __init__(
         self,
-        # time_limit: int = 600,  # seconds
+        save_ttable_every: int = 10,
         sim_time_table: Optional[TranspositionTable] = None,
         *args,
         **kwargs,
@@ -192,6 +207,12 @@ class OscillationTreeCelery(OscillationTreeParallel):
 
         self.run_task = run_ssa
         self._simulation_time_table = TranspositionTable(sim_time_table)
+
+        self.iteration_counter = 0
+        self.save_ttable_every = save_ttable_every
+
+        self.add_done_callback(save_ttable_every_n_iters)
+
         # self.run_task.soft_time_limit = time_limit
         # self.time_limit = time_limit
 
@@ -226,21 +247,10 @@ class OscillationTreeCelery(OscillationTreeParallel):
         )
 
         # Submit the tasks as a group and wait for them to finish, with a timeout
-        task_group = group(
-            [self.run_task.s(*args, **kwargs) for args in input_args],
-            # soft_time_limit=self.time_limit,
-        )
-        print(
-            f"Submitting {len(input_args)} tasks to Celery with time "
-            f"limit {self.run_task.soft_time_limit}s."
-        )
+        task_group = group(self.run_task.s(*args, **kwargs) for args in input_args)
         group_result = task_group.delay()
         results = group_result.get()
         rewards, sim_times = zip(*results)
-        print(f"{rewards=}")
-        print(f"{sim_times=}")
         self.simtime_table[state].extend(list(sim_times))
-
-        raise NotImplementedError("Finished")
 
         return rewards, {}
