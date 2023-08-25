@@ -1,8 +1,8 @@
 #!/bin/bash --login
 
-#SBATCH --time=01:00:00   # walltime
-#SBATCH --ntasks=1   # number of processor cores per job in array (i.e. tasks)
-#SBATCH --array=0-9
+#SBATCH --time=24:00:00   # walltime
+#SBATCH --ntasks=8   # number of processor cores per job in array (i.e. tasks)
+#SBATCH --array=0-39
 #SBATCH --mem-per-cpu=2G   # memory per CPU core
 #SBATCH -J "Circuitree-MCTS-Celery"   # job name
 #SBATCH --mail-user=pbhamidi@usc.edu   # email address
@@ -54,8 +54,12 @@ if [ "$SLURM_ARRAY_TASK_ID" == "0" ]; then
     $JOBSUBMIT
 fi
 
+# Sleep for an amount of time proportional to the task ID, to avoid all tasks starting at the same time
+echo "Sleeping for 10 * $SLURM_ARRAY_TASK_ID seconds"
+sleep $((10 * $SLURM_ARRAY_TASK_ID))
+
 echo "Launching celery worker"
-CMD="celery -A oscillation_parallel_celery.app worker --loglevel=info -P solo --hostname=worker$SLURM_ARRAY_TASK_ID@%h"
+CMD="celery -A oscillation_parallel_celery.app worker --loglevel=info --concurrency=8 --hostname=worker$SLURM_ARRAY_TASK_ID@%h"
 # CMD="python /home/pbhamidi/git/circuitree-paper/oscillation/launch_celery_worker.py $SLURM_ARRAY_TASK_ID"
 echo $CMD
 $CMD
