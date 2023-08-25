@@ -28,7 +28,7 @@ app = Celery(
     # broker_connection_retry_on_startup=False,
     broker_connection_retry_on_startup=True,
     worker_cancel_long_running_tasks_on_connection_loss=True,
-    broker_connection_max_retries=10,
+    # broker_connection_max_retries=10,
     # redis_max_connections=1,
     task_compression="gzip",
 )
