@@ -1,11 +1,12 @@
 from celery import Celery, group
 from celery.exceptions import SoftTimeLimitExceeded
+from circuitree.parallel import TranspositionTable
 import h5py
 import numpy as np
 from pathlib import Path
 import ssl
 from time import perf_counter, sleep
-from typing import Any
+from typing import Any, Optional
 
 from oscillation_parallel import OscillationTreeParallel
 from tf_network import TFNetworkModel
@@ -52,24 +53,27 @@ def run_ssa(
     save_nans: bool = True,
     exist_ok: bool = False,
 ):
+    kwargs = dict(
+        seed=seed,
+        prots0=prots0,
+        params=params,
+        state=state,
+        dt=dt,
+        nt=nt,
+        max_iter_per_timestep=max_iter_per_timestep,
+        autocorr_threshold=autocorr_threshold,
+        save_dir=save_dir,
+        save_nans=save_nans,
+        exist_ok=exist_ok,
+    )
     try:
-        reward = _run_ssa(
-            seed,
-            prots0,
-            params,
-            state,
-            dt,
-            nt,
-            max_iter_per_timestep,
-            autocorr_threshold,
-            save_dir,
-            save_nans,
-            exist_ok,
-        )
-        return reward
+        reward, sim_time = _run_ssa(**kwargs)
+        return reward, sim_time
 
     except SoftTimeLimitExceeded:
-        return np.nan
+        reward = sim_time = -1.0
+        _save_results(prefix="timeout_", **kwargs)
+        return -1.0, -1.0
 
 
 def _run_ssa(
@@ -104,15 +108,13 @@ def _run_ssa(
     sim_time = end - start
 
     # Handle results and save to data dir on worker-side
-    state = model.genotype
-
     save = False
     prefix = ""
     if np.isnan(autocorr_min):
         if save_nans:
             save = True
             prefix = "nan_"
-        reward = np.nan
+        reward = -1.0  # serializable, unlike np.nan
     else:
         reward = float(-autocorr_min > autocorr_threshold)
         if reward:
@@ -120,40 +122,73 @@ def _run_ssa(
             prefix = "osc_"
 
     if save:
-        fname = f"{prefix}state_{state}_seed{seed}.hdf5"
-        fpath = Path(save_dir) / fname
-        if fpath.exists():
-            if not exist_ok:
-                raise FileExistsError(fpath)
-        with h5py.File(fpath, "w") as f:
-            f.create_dataset("y_t", data=prots_t)
-            f.attrs["reward"] = reward
-            f.attrs["state"] = state
-            f.attrs["seed"] = seed
-            f.attrs["dt"] = model.dt
-            f.attrs["nt"] = model.nt
-            f.attrs["max_iter_per_timestep"] = model.max_iter_per_timestep
-            f.attrs["autocorr_threshold"] = autocorr_threshold
-            f.attrs["sim_time"] = sim_time
+        _save_results(
+            model=model,
+            seed=seed,
+            reward=reward,
+            sim_time=sim_time,
+            prots_t=prots_t,
+            autocorr_threshold=autocorr_threshold,
+            save_dir=save_dir,
+            prefix=prefix,
+            exist_ok=exist_ok,
+        )
+    return reward, sim_time
 
-    return reward
+
+def _save_results(
+    seed: int,
+    state: str,
+    dt: float,
+    nt: int,
+    max_iter_per_timestep: int,
+    autocorr_threshold: float,
+    save_dir: Path,
+    exist_ok: bool,
+    prefix: str,
+    reward: float | np.float64 = np.nan,
+    sim_time: float | np.float64 = np.nan,
+    prots_t: np.ndarray = np.array([]),
+    **kwargs,
+):
+    fname = f"{prefix}state_{state}_seed{seed}.hdf5"
+    fpath = Path(save_dir) / fname
+    if fpath.exists():
+        if not exist_ok:
+            raise FileExistsError(fpath)
+    with h5py.File(fpath, "w") as f:
+        f.create_dataset("y_t", data=prots_t)
+        f.attrs["reward"] = reward
+        f.attrs["state"] = state
+        f.attrs["seed"] = seed
+        f.attrs["dt"] = dt
+        f.attrs["nt"] = nt
+        f.attrs["max_iter_per_timestep"] = max_iter_per_timestep
+        f.attrs["autocorr_threshold"] = autocorr_threshold
+        f.attrs["sim_time"] = sim_time
 
 
 class OscillationTreeCelery(OscillationTreeParallel):
     def __init__(
         self,
         # time_limit: int = 600,  # seconds
+        sim_time_table: Optional[TranspositionTable] = None,
         *args,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
 
         self.run_task = run_ssa
+        self._simulation_time_table = TranspositionTable(sim_time_table)
         # self.run_task.soft_time_limit = time_limit
         # self.time_limit = time_limit
 
         # # Specify any attributes that should not be serialized when dumping to file
-        # self._non_serializable_attrs.append(...)
+        # self._non_serializable_attrs.append("_simulation_time_table")
+
+    @property
+    def simtime_table(self):
+        return self._simulation_time_table
 
     def save_results(self, data: dict[str, Any]) -> None:
         """Results are saved in the worker processes, so this method is a no-op."""
@@ -188,8 +223,11 @@ class OscillationTreeCelery(OscillationTreeParallel):
             f"limit {self.run_task.soft_time_limit}s."
         )
         group_result = task_group.delay()
-        rewards = group_result.get()
-        print(f"Got results: {rewards=}")
+        results = group_result.get()
+        rewards, sim_times = zip(*results)
+        print(f"{rewards=}")
+        print(f"{sim_times=}")
+        self.simtime_table[state].extend(list(sim_times))
 
         raise NotImplementedError("Finished")
 
