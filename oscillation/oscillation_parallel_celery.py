@@ -1,5 +1,6 @@
 from celery import Celery, group
 from celery.exceptions import SoftTimeLimitExceeded
+from celery.utils.log import get_task_logger
 from circuitree.parallel import TranspositionTable
 import h5py
 import numpy as np
@@ -37,6 +38,7 @@ app.conf["broker_transport_options"] = {
     "max_connections": 2,
     # "socket_keepalive": True,
 }
+logger = get_task_logger(__name__)
 
 
 @app.task(soft_time_limit=12)
@@ -67,6 +69,7 @@ def run_ssa(
         exist_ok=exist_ok,
     )
     try:
+        logger.info(f"Running SSA with {seed=}, {state=}")
         reward, sim_time = _run_ssa(**kwargs)
         return reward, sim_time
 
@@ -90,6 +93,7 @@ def _run_ssa(
     exist_ok: bool,
 ):
     start = perf_counter()
+    logger.info("Initializing model")
     model = TFNetworkModel(
         genotype=state,
         seed=seed,
@@ -98,6 +102,7 @@ def _run_ssa(
         max_iter_per_timestep=max_iter_per_timestep,
         initialize=True,
     )
+    logger.info("Running SSA...")
     prots_t, autocorr_min = model.run_with_params_and_get_acf_minimum(
         prots0=np.array(prots0),
         params=np.array(params),
@@ -106,20 +111,26 @@ def _run_ssa(
     )
     end = perf_counter()
     sim_time = end - start
+    logger.info(f"Finished SSA in {sim_time:.4f}s")
 
     # Handle results and save to data dir on worker-side
     save = False
     prefix = ""
     if np.isnan(autocorr_min):
+        logger.info("Simulation returned NaNs - maxiter_per_timestep exceeded.")
         if save_nans:
             save = True
             prefix = "nan_"
         reward = -1.0  # serializable, unlike np.nan
     else:
+        logger.info(f"Finished with autocorr. minimum: {autocorr_min:.4f}")
         reward = float(-autocorr_min > autocorr_threshold)
         if reward:
             save = True
             prefix = "osc_"
+            logger.info("Oscillation detected, saving results.")
+        else:
+            logger.info("No oscillations detected.")
 
     if save:
         _save_results(
@@ -156,6 +167,7 @@ def _save_results(
     if fpath.exists():
         if not exist_ok:
             raise FileExistsError(fpath)
+    logger.info(f"Saving results to {fpath}")
     with h5py.File(fpath, "w") as f:
         f.create_dataset("y_t", data=prots_t)
         f.attrs["reward"] = reward
