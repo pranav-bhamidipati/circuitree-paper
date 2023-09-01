@@ -13,7 +13,7 @@ from typing import Any, Optional
 from oscillation_parallel import OscillationTreeParallel
 from tf_network import TFNetworkModel
 
-_redis_url = os.environ["CELERY_BROKER_URL"]
+_redis_url = os.environ.get("CELERY_BROKER_URL", None)
 if not _redis_url:
     _redis_url = (
         Path("~/git/circuitree-paper/oscillation/celery/.redis-url")
@@ -41,7 +41,7 @@ app.conf["broker_transport_options"] = {
 task_logger = get_task_logger(__name__)
 
 
-@app.task(soft_time_limit=90)
+@app.task(soft_time_limit=120, time_limit=150)
 def run_ssa(
     seed: int,
     prots0: list[int],
@@ -53,7 +53,7 @@ def run_ssa(
     autocorr_threshold: float,
     save_dir: Path,
     save_nans: bool = True,
-    exist_ok: bool = False,
+    exist_ok: bool = True,
 ):
     kwargs = dict(
         seed=seed,
@@ -73,10 +73,13 @@ def run_ssa(
         reward, sim_time = _run_ssa(**kwargs)
         return reward, sim_time
 
-    except SoftTimeLimitExceeded:
-        reward = sim_time = -1.0
-        _save_results(prefix="timeout_", **kwargs)
-        return -1.0, -1.0
+    except Exception as e:
+        if isinstance(e, SystemError) or isinstance(e, SoftTimeLimitExceeded):
+            reward = sim_time = -1.0
+            _save_results(prefix="timeout_", **kwargs)
+            return -1.0, -1.0
+        else:
+            raise
 
 
 def _run_ssa(
@@ -131,47 +134,17 @@ def _run_ssa(
         task_logger.info("Simulation returned NaNs - maxiter_per_timestep exceeded.")
         reward = -1.0  # serializable, unlike np.nan
         if save_nans:
-            _save_results(prefix="nan_", autocorr_min=reward, **save_kw)
-            prefix = "nan_"
+            _save_results(prefix="nan_", **save_kw)
     else:
         task_logger.info(f"Finished with autocorr. minimum: {autocorr_min:.4f}")
         reward = float(-autocorr_min > autocorr_threshold)
         if reward:
-            save = True
-            prefix = "osc_"
             task_logger.info("Oscillation detected, saving results.")
+            _save_results(prefix="osc_", **save_kw)
         else:
             task_logger.info("No oscillations detected.")
 
-    if save:
-        _save_results(
-            model=model,
-            seed=seed,
-            autocorr_min=reward,
-            sim_time=sim_time,
-            prots_t=prots_t,
-            autocorr_threshold=autocorr_threshold,
-            save_dir=save_dir,
-            prefix=prefix,
-            exist_ok=exist_ok,
-        )
     return reward, sim_time
-
-    # Handle results and save to data dir on worker-side
-    save_kw = dict()
-    if np.isnan(autocorr_min):
-        logging.info("Simulation returned NaNs; maxiter_per_timestep exceeded.")
-        if save_nans:
-            _save_nan_results(prefix="nan_", **save_kw)
-    else:
-        logging.info(f"Finished with autocorr. minimum: {autocorr_min:.4f}")
-        if -autocorr_min > autocorr_threshold:
-            logging.info("Oscillation detected, saving results.")
-            _save_results(prefix="osc_", **save_kw)
-        else:
-            logging.info("No oscillations detected.")
-
-    return autocorr_min, sim_time
 
 
 def _save_results(
@@ -192,7 +165,9 @@ def _save_results(
     fname = f"{prefix}state_{state}_seed{seed}.hdf5"
     fpath = Path(save_dir) / fname
     if fpath.exists():
-        if not exist_ok:
+        if exist_ok:
+            return
+        else:
             raise FileExistsError(fpath)
     task_logger.info(f"Saving results to {fpath}")
     with h5py.File(fpath, "w") as f:
@@ -297,6 +272,8 @@ class OscillationTreeCelery(OscillationTreeParallel):
         group_result = task_group.delay()
         results = group_result.get()
         rewards, sim_times = zip(*results)
+        rewards = [r if r >= 0 else np.nan for r in rewards]
+        sim_times = [t if t >= 0 else np.nan for t in sim_times]
         self.simtime_table[state].extend(list(sim_times))
 
         return rewards, {}

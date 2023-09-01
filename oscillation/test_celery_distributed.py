@@ -25,6 +25,7 @@ def run_circuit_search(
     )
 
     save_dir = master_save_dir.joinpath(f"tree_{seed}")
+    save_dir.mkdir(exist_ok=True)
     tree = OscillationTreeCelery(
         parameter_table=param_table, seed=seed, save_dir=save_dir, **tree_kw
     )
@@ -65,17 +66,21 @@ def main(
 
 
 if __name__ == "__main__":
+    from datetime import date
+
+    today = date.today().strftime("%y%m%d")
     param_sets_csv = Path(
         "~/git/circuitree-paper/data/oscillation/param_sets_queue_10000_5tf.csv"
     ).expanduser()
     master_save_dir = Path(
-        "~/git/circuitree-paper/data/oscillation/mcts/230831_distributed"
+        f"~/git/circuitree-paper/data/oscillation/mcts/{today}_distributed"
     ).expanduser()
+    master_save_dir.mkdir(exist_ok=True)
 
     main(
         param_sets_csv=param_sets_csv,
         master_save_dir=master_save_dir,
-        n_trees=10,
+        n_trees=30,
         batch_size=5,
         start_seed=2023,
         n_steps=1_000_000,
