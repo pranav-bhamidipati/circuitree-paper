@@ -8,7 +8,7 @@ import pandas as pd
 from pathlib import Path
 from psutil import cpu_count
 from time import perf_counter
-from typing import Iterable, Optional
+from typing import Optional
 from uuid import uuid4
 
 from tf_network import TFNetworkModel
@@ -48,10 +48,10 @@ def run_batch_and_save(
         nt=nt,
         abs=True,
     )
-    run_results = visit_num, genotype, y_t, pop0s, param_sets, rewards
-
     end_sim_time = perf_counter()
     sim_time = end_sim_time - start_sim_time
+    run_results = visit_num, genotype, y_t, pop0s, param_sets, rewards, sim_time
+
     logging.info(f"Simulation took {sim_time:.2f}s ")
 
     save_run(
@@ -61,11 +61,8 @@ def run_batch_and_save(
         param_names=param_names,
         oscillation_thresh=oscillation_thresh,
     )
-    end_time = perf_counter()
-    total_time = end_time - start_time
-    logging.info(f"Total time {total_time:.2f}s")
 
-    return seed, visit_num, genotype, sim_time, total_time
+    return seed, visit_num, genotype, sim_time
 
 
 def save_run(

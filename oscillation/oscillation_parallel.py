@@ -1,11 +1,10 @@
 from circuitree.parallel import ParallelTree
 import h5py
 from functools import partial
-from multiprocessing.pool import Pool
 import numpy as np
 from pathlib import Path
 from time import perf_counter
-from typing import Any, Optional
+from typing import Any, Iterable
 from uuid import uuid4
 import warnings
 
@@ -15,12 +14,27 @@ from oscillation import OscillationTree
 __all__ = ["OscillationTreeParallel"]
 
 
-def run_ssa(visit, prots0, params, model: TFNetworkModel):
+def run_ssa(
+    seed: int,
+    prots0: Iterable[int],
+    params: Iterable[float],
+    state: str,
+    dt: float,
+    nt: int,
+    max_iter_per_timestep: int,
+):
     start = perf_counter()
+    model = TFNetworkModel(
+        state,
+        dt=dt,
+        nt=nt,
+        max_iter_per_timestep=max_iter_per_timestep,
+        initialize=True,
+    )
     prots_t, reward = model.run_with_params_and_get_acf_minimum(
         prots0=prots0,
         params=params,
-        seed=visit,
+        seed=seed,
         maxiter_ok=True,
         abs=True,
     )
@@ -36,6 +50,7 @@ def save_simulation_results_to_hdf(
     y_t: np.ndarray,
     autocorr_threshold: float,
     save_dir: Path,
+    sim_time: float = -1.0,
     prefix: str = "",
     **kwargs,
 ) -> None:
@@ -52,6 +67,7 @@ def save_simulation_results_to_hdf(
         f.attrs["nt"] = model.nt
         f.attrs["max_iter_per_timestep"] = model.max_iter_per_timestep
         f.attrs["autocorr_threshold"] = autocorr_threshold
+        f.attrs["sim_time"] = sim_time
 
 
 class OscillationTreeParallel(OscillationTree, ParallelTree):
@@ -212,49 +228,3 @@ class OscillationTreeParallel(OscillationTree, ParallelTree):
 
     def save_results(self, data: dict[str, Any]) -> None:
         raise NotImplementedError
-
-
-class OscillationTreeMP(OscillationTreeParallel):
-    def __init__(
-        self,
-        *,
-        pool: Optional[Pool] = None,
-        nprocs: int = 1,
-        **kwargs,
-    ):
-        raise NotImplementedError
-
-        super().__init__(**kwargs)
-        self._pool = Pool(nprocs) if pool is None else pool
-        self.n_procs = self.pool._processes
-
-        # Specify any attributes that should not be serialized when dumping to file
-        self._non_serializable_attrs.append("_pool")
-
-    @property
-    def pool(self) -> Pool:
-        return self._pool
-
-    def simulate_visits(self, state, visits) -> tuple[list[float], dict[str, Any]]:
-        """Should return a list of reward values and a dictionary of any data
-        to be analyzed. Takes a state and a list of which visits to simulate.
-        Random seeds, parameter sets, and initial conditions are selected from
-        the parameter table `self.param_table`."""
-        model = TFNetworkModel(
-            state,
-            dt=self.dt,
-            nt=self.nt,
-            max_iter_per_timestep=self.max_iter_per_timestep,
-            initialize=True,
-        )
-        sample_state = partial(run_ssa, model=model)
-        input_args = [self.param_table[v] for v in visits]
-        rewards, prots_t, sim_times = self.pool.starmap(sample_state, input_args)
-        data = {
-            "model": model,
-            "visits": visits,
-            "rewards": rewards,
-            "y_t": prots_t,
-            "sim_times": sim_times,
-        }
-        return rewards, data

@@ -14,7 +14,8 @@ from tf_network import TFNetworkModel
 
 
 _redis_url = (
-    Path("/home/pbhamidi/git/circuitree-paper/oscillation/celery/.redis-url")
+    Path("~/git/circuitree-paper/oscillation/celery/.redis-url")
+    .expanduser()
     .read_text()
     .strip()
 )
@@ -103,21 +104,32 @@ def _run_ssa(
         prots0=np.array(prots0),
         params=np.array(params),
         maxiter_ok=True,
-        abs=True,
+        abs=False,
     )
     end = perf_counter()
     sim_time = end - start
     task_logger.info(f"Finished SSA in {sim_time:.4f}s")
 
     # Handle results and save to data dir on worker-side
-    save = False
-    prefix = ""
+    save_kw = dict(
+        seed=seed,
+        state=state,
+        dt=dt,
+        nt=nt,
+        max_iter_per_timestep=max_iter_per_timestep,
+        autocorr_threshold=autocorr_threshold,
+        save_dir=save_dir,
+        exist_ok=exist_ok,
+        autocorr_min=autocorr_min,
+        sim_time=sim_time,
+        prots_t=prots_t,
+    )
     if np.isnan(autocorr_min):
         task_logger.info("Simulation returned NaNs - maxiter_per_timestep exceeded.")
-        if save_nans:
-            save = True
-            prefix = "nan_"
         reward = -1.0  # serializable, unlike np.nan
+        if save_nans:
+            _save_results(prefix="nan_", autocorr_min=reward, **save_kw)
+            prefix = "nan_"
     else:
         task_logger.info(f"Finished with autocorr. minimum: {autocorr_min:.4f}")
         reward = float(-autocorr_min > autocorr_threshold)
@@ -132,7 +144,7 @@ def _run_ssa(
         _save_results(
             model=model,
             seed=seed,
-            reward=reward,
+            autocorr_min=reward,
             sim_time=sim_time,
             prots_t=prots_t,
             autocorr_threshold=autocorr_threshold,
@@ -142,6 +154,22 @@ def _run_ssa(
         )
     return reward, sim_time
 
+    # Handle results and save to data dir on worker-side
+    save_kw = dict(
+    )
+    if np.isnan(autocorr_min):
+        logging.info("Simulation returned NaNs; maxiter_per_timestep exceeded.")
+        if save_nans:
+            _save_nan_results(prefix="nan_", **save_kw)
+    else:
+        logging.info(f"Finished with autocorr. minimum: {autocorr_min:.4f}")
+        if -autocorr_min > autocorr_threshold:
+            logging.info("Oscillation detected, saving results.")
+            _save_results(prefix="osc_", **save_kw)
+        else:
+            logging.info("No oscillations detected.")
+
+    return autocorr_min, sim_time
 
 def _save_results(
     seed: int,
@@ -153,7 +181,7 @@ def _save_results(
     save_dir: Path,
     exist_ok: bool,
     prefix: str,
-    reward: float | np.float64 = np.nan,
+    autocorr_min: float | np.float64 = np.nan,
     sim_time: float | np.float64 = np.nan,
     prots_t: np.ndarray = np.array([]),
     **kwargs,
@@ -166,7 +194,7 @@ def _save_results(
     task_logger.info(f"Saving results to {fpath}")
     with h5py.File(fpath, "w") as f:
         f.create_dataset("y_t", data=prots_t)
-        f.attrs["reward"] = reward
+        f.attrs["autocorr_min"] = autocorr_min
         f.attrs["state"] = state
         f.attrs["seed"] = seed
         f.attrs["dt"] = dt
