@@ -1,0 +1,47 @@
+services:
+  - type: worker
+    name: queue
+    region: ohio
+    env: python
+    buildCommand: "poetry shell && cd oscillation"
+    startCommand: "celery --app oscillation_parallel_celery.app worker -P processes --loglevel info"
+    autoDeploy: false
+    envVars:
+      - key: CELERY_BROKER_URL
+        fromService:
+          name: circuitree-distributed
+          type: redis
+          property: connectionString
+  - type: web
+    name: app
+    region: ohio
+    env: python
+    buildCommand: "poetry shell"
+    startCommand: "gunicorn app:app"
+    autoDeploy: false
+    envVars:
+      - key: CELERY_BROKER_URL
+        fromService:
+          name: circuitree-distributed
+          type: redis
+          property: connectionString
+  - type: web
+    name: flower
+    region: ohio
+    plan: free
+    env: python
+    buildCommand: "poetry shell && cd oscillation"
+    startCommand: "celery flower --app oscillation_parallel_celery.app --loglevel info"
+    autoDeploy: false
+    envVars:
+      - key: CELERY_BROKER_URL
+        fromService:
+          type: redis
+          name: circuitree-distributed
+          property: connectionString
+  - type: redis
+    name: circuitree-distributed
+    region: ohio
+    plan: pro # we choose a plan with persistence to ensure tasks are not lost upon restart
+    maxmemoryPolicy: noeviction # recommended policy for queues
+    ipAllowList: [] # only allow internal connections
