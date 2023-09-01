@@ -5,6 +5,7 @@ scratch
 figures
 sacred
 arrayjobs
+tmp
 
 # Redis server URL
 .redis-url
