@@ -1,3 +1,4 @@
+import os
 from celery import Celery, group
 from celery.exceptions import SoftTimeLimitExceeded
 from celery.utils.log import get_task_logger
@@ -13,12 +14,12 @@ from oscillation_parallel import OscillationTreeParallel
 from tf_network import TFNetworkModel
 
 
-_redis_url = (
-    Path("~/git/circuitree-paper/oscillation/celery/.redis-url")
-    .expanduser()
-    .read_text()
-    .strip()
-)
+_broker_url = Path("~/git/circuitree-paper/oscillation/celery/.redis-url").expanduser()
+if _broker_url.exists():
+    _redis_url = _broker_url.read_text().strip()
+else:
+    _redis_url = Path(os.environ["CELERY_BROKER_URL"]).read_text().strip()
+
 app = Celery(
     "tasks",
     broker=_redis_url,
@@ -155,8 +156,7 @@ def _run_ssa(
     return reward, sim_time
 
     # Handle results and save to data dir on worker-side
-    save_kw = dict(
-    )
+    save_kw = dict()
     if np.isnan(autocorr_min):
         logging.info("Simulation returned NaNs; maxiter_per_timestep exceeded.")
         if save_nans:
@@ -170,6 +170,7 @@ def _run_ssa(
             logging.info("No oscillations detected.")
 
     return autocorr_min, sim_time
+
 
 def _save_results(
     seed: int,
