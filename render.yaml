@@ -47,6 +47,10 @@ services:
           type: redis
           name: circuitree-distributed
           property: connectionString
+      - key: POETRY_VERSION
+        value: "1.6.1"
+      - key: PYTHON_VERSION
+        value: "3.10.7"
   - type: redis
     name: circuitree-distributed
     region: ohio
