@@ -38,7 +38,7 @@ services:
     region: ohio
     plan: free
     env: python
-    buildCommand: "cd oscillation"
+    buildCommand: "cd oscillation && poetry update && poetry install"
     startCommand: "poetry run celery flower --app oscillation_parallel_celery.app --loglevel info"
     autoDeploy: false
     envVars:
