@@ -56,4 +56,6 @@ services:
     region: ohio
     plan: pro # we choose a plan with persistence to ensure tasks are not lost upon restart
     maxmemoryPolicy: noeviction # recommended policy for queues
-    ipAllowList: [] # only allow internal connections
+    ipAllowList: # required
+      - source: 0.0.0.0/0
+        description: everywhere
