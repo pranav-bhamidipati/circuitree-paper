@@ -279,35 +279,24 @@ class OscillationTreeCelery(OscillationTreeParallel):
                     raise
                 else:
                     retries_left -= 1
-
-                    # Exponential backoff
-                    retry_wait = 2 ** (n_retries - retries_left) + np.random.rand()
                     self.logger.info(
-                        f"Received OperationalError. Too many requests? Retrying "
-                        f"in {retry_wait:.3f} seconds."
+                        f"Received OperationalError. Too many requests? Retrying..."
                     )
-                    sleep(retry_wait)
+                    sleep(np.random.uniform(0.5, 3.0))
 
         return rewards, sim_times
 
     def compute_tasks_and_collect(
         self, group_result: AsyncResult | GroupResult
     ) -> tuple[list[float], list[float]]:
-        result_indices = {res.id: i for i, res in enumerate(group_result.results)}
         rewards = [np.nan] * self.batch_size
         sim_times = [np.nan] * self.batch_size
         try:
-            for result, val in group_result.collect():
-                if (
-                    isinstance(val, tuple)
-                    and len(val) == 2
-                    and isinstance(val[0], float)
-                ):
-                    reward, sim_time = val
-                    i = result_indices[result.id]
-                    if reward >= 0:  # negative reward indicates soft timeout
-                        rewards[i] = reward
-                        sim_times[i] = sim_time
+            for i, result in enumerate(group_result.results):
+                reward, sim_time = result.get()
+                if reward >= 0:  # negative reward indicates soft timeout
+                    rewards[i] = reward
+                    sim_times[i] = sim_time
         except TimeLimitExceeded:  # hard timeout
             # Cancel the tasks that are still running
             n_cancelled = self.batch_size - group_result.completed_count()
