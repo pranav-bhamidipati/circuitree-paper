@@ -8,9 +8,11 @@ from circuitree.parallel import TranspositionTable
 import h5py
 import numpy as np
 from pathlib import Path
+from redis.exceptions import ResponseError
 import ssl
-from time import perf_counter
+from time import perf_counter, sleep
 from typing import Any, Optional
+
 
 from oscillation_parallel import OscillationTreeParallel
 from tf_network import TFNetworkModel
@@ -256,6 +258,66 @@ class OscillationTreeCelery(OscillationTreeParallel):
         """Results are saved in the worker processes, so this method is a no-op."""
         return
 
+    def compute_tasks_and_handle_errors(
+        self, iter_args, n_retries=5, **kwargs
+    ) -> tuple[list[float], list[float]]:
+        task_group = group(self.run_task.s(*args, **kwargs) for args in iter_args)
+        submitted = False
+        retries_left = n_retries
+        while True:
+            try:
+                if not submitted:
+                    group_result: AsyncResult | GroupResult = task_group.delay()
+                    submitted = True
+                rewards, sim_times = self.compute_tasks_and_collect(group_result)
+                break
+            except ResponseError:
+                if retries_left == 0:
+                    self.logger.warning(
+                        f"Received {n_retries}/{n_retries} ResponseErrors. Giving up."
+                    )
+                    raise
+                else:
+                    retries_left -= 1
+
+                    # Exponential backoff
+                    retry_wait = 2 ** (n_retries - retries_left) + np.random.rand()
+                    self.logger.info(
+                        f"Received ResponseError. Too many requests? Retrying "
+                        f"in {retry_wait:.3f} seconds."
+                    )
+                    sleep(retry_wait)
+
+        return rewards, sim_times
+
+    def compute_tasks_and_collect(
+        self, group_result: AsyncResult | GroupResult
+    ) -> tuple[list[float], list[float]]:
+        result_indices = {res.id: i for i, res in enumerate(group_result.results)}
+        rewards = [np.nan] * self.batch_size
+        sim_times = [np.nan] * self.batch_size
+        try:
+            for result, val in group_result.collect():
+                if (
+                    isinstance(val, tuple)
+                    and len(val) == 2
+                    and isinstance(val[0], float)
+                ):
+                    reward, sim_time = val
+                    i = result_indices[result.id]
+                    if reward >= 0:  # negative reward indicates soft timeout
+                        rewards[i] = reward
+                        sim_times[i] = sim_time
+        except TimeLimitExceeded:  # hard timeout
+            # Cancel the tasks that are still running
+            n_cancelled = self.batch_size - group_result.completed_count()
+            self.logger.info(
+                f"Hard time limit exceeded, canceling {n_cancelled}/{self.batch_size} tasks."
+            )
+            group_result.revoke(terminate=True)
+
+        return rewards, sim_times
+
     def simulate_visits(self, state, visits) -> tuple[list[float], dict[str, Any]]:
         # Make the input args JSON serializable
         input_args = []
@@ -276,30 +338,7 @@ class OscillationTreeCelery(OscillationTreeParallel):
         )
 
         # Submit the tasks as a group and wait for them to finish, with a timeout
-        task_group = group(self.run_task.s(*args, **kwargs) for args in input_args)
-        rewards = [np.nan] * self.batch_size
-        sim_times = [np.nan] * self.batch_size
-        try:
-            group_result: GroupResult | AsyncResult = task_group.delay()
-            result_indices = {res.id: i for i, res in enumerate(group_result.results)}
-            for result, val in group_result.collect():
-                if (
-                    isinstance(val, tuple)
-                    and len(val) == 2
-                    and isinstance(val[0], float)
-                ):
-                    reward, sim_time = val
-                    i = result_indices[result.id]
-                    if reward >= 0:  # negative reward indicates timeout
-                        rewards[i] = reward
-                        sim_times[i] = sim_time
-        except TimeLimitExceeded:
-            # Cancel the tasks that are still running
-            n_cancelled = self.batch_size - group_result.completed_count()
-            self.logger.info(
-                f"Time limit exceeded, canceling {n_cancelled}/{self.batch_size} tasks."
-            )
-            group_result.revoke(terminate=True)
+        rewards, sim_times = self.compute_tasks_and_handle_errors(input_args, **kwargs)
 
         self.simtime_table[state].extend(list(sim_times))
 
