@@ -1,7 +1,8 @@
 import os
 from celery import Celery, group
-from celery.exceptions import SoftTimeLimitExceeded
+from celery.exceptions import SoftTimeLimitExceeded, TimeLimitExceeded
 from celery.utils.log import get_task_logger
+from celery.result import AsyncResult, GroupResult
 from circuitree.parallel import TranspositionTable
 import h5py
 import numpy as np
@@ -266,11 +267,30 @@ class OscillationTreeCelery(OscillationTreeParallel):
 
         # Submit the tasks as a group and wait for them to finish, with a timeout
         task_group = group(self.run_task.s(*args, **kwargs) for args in input_args)
-        group_result = task_group.delay()
-        results = group_result.get()
-        rewards, sim_times = zip(*results)
-        rewards = [r if r >= 0 else np.nan for r in rewards]
-        sim_times = [t if t >= 0 else np.nan for t in sim_times]
+        task_indices = {task: i for i, task in enumerate(task_group.tasks)}
+        rewards = [np.nan] * self.batch_size
+        sim_times = [np.nan] * self.batch_size
+        try:
+            group_result: GroupResult | AsyncResult = task_group.delay()
+            for result, val in group_result.collect():
+                if (
+                    isinstance(val, tuple)
+                    and len(val) == 2
+                    and isinstance(val[0], float)
+                ):
+                    reward, sim_time = val
+                    i = task_indices[result.task_id]
+                    if reward >= 0:  # negative reward indicates timeout
+                        rewards[i] = reward
+                        sim_times[i] = sim_time
+        except TimeLimitExceeded:
+            # Cancel the tasks that are still running
+            n_cancelled = self.batch_size - group_result.completed_count()
+            self.logger.info(
+                f"Time limit exceeded, canceling {n_cancelled}/{self.batch_size} tasks."
+            )
+            group_result.revoke(terminate=True)
+
         self.simtime_table[state].extend(list(sim_times))
 
         return rewards, {}
