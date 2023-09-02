@@ -8,7 +8,7 @@ from circuitree.parallel import TranspositionTable
 import h5py
 import numpy as np
 from pathlib import Path
-from redis.exceptions import ResponseError
+from kombu.exceptions import OperationalError
 import ssl
 from time import perf_counter, sleep
 from typing import Any, Optional
@@ -271,10 +271,10 @@ class OscillationTreeCelery(OscillationTreeParallel):
                     submitted = True
                 rewards, sim_times = self.compute_tasks_and_collect(group_result)
                 break
-            except ResponseError:
+            except OperationalError:
                 if retries_left == 0:
                     self.logger.warning(
-                        f"Received {n_retries}/{n_retries} ResponseErrors. Giving up."
+                        f"Received {n_retries}/{n_retries} OperationalErrors. Giving up."
                     )
                     raise
                 else:
@@ -283,7 +283,7 @@ class OscillationTreeCelery(OscillationTreeParallel):
                     # Exponential backoff
                     retry_wait = 2 ** (n_retries - retries_left) + np.random.rand()
                     self.logger.info(
-                        f"Received ResponseError. Too many requests? Retrying "
+                        f"Received OperationalError. Too many requests? Retrying "
                         f"in {retry_wait:.3f} seconds."
                     )
                     sleep(retry_wait)
