@@ -1,6 +1,7 @@
 import os
+from billiard.exceptions import TimeLimitExceeded
 from celery import Celery, group
-from celery.exceptions import SoftTimeLimitExceeded, TimeLimitExceeded
+from celery.exceptions import SoftTimeLimitExceeded
 from celery.utils.log import get_task_logger
 from celery.result import AsyncResult, GroupResult
 from circuitree.parallel import TranspositionTable
