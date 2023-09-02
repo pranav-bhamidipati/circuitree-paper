@@ -7,7 +7,7 @@ services:
     startCommand: "cd oscillation && poetry run celery --app oscillation_parallel_celery.app worker -P processes --loglevel info"
     autoDeploy: false
     envVars:
-      - key: CELERY_BROKER_URL
+      - key: CELERY_BROKER_URL_INTERNAL
         fromService:
           name: circuitree-distributed
           type: redis
@@ -21,10 +21,10 @@ services:
     region: ohio
     env: python
     buildCommand: "poetry update && poetry install"
-    startCommand: "cd oscillation %% poetry run gunicorn oscillation_parallel_celery:app"
+    startCommand: "cd oscillation && poetry run gunicorn oscillation_parallel_celery:app"
     autoDeploy: false
     envVars:
-      - key: CELERY_BROKER_URL
+      - key: CELERY_BROKER_URL_INTERNAL
         fromService:
           name: circuitree-distributed
           type: redis
@@ -39,10 +39,10 @@ services:
     plan: free
     env: python
     buildCommand: "poetry update && poetry install"
-    startCommand: "cd oscillation && poetry run celery --app oscillation_parallel_celery.app flower --loglevel info "
+    startCommand: "cd oscillation && poetry run celery --app oscillation_parallel_celery.app flower --loglevel info"
     autoDeploy: false
     envVars:
-      - key: CELERY_BROKER_URL
+      - key: CELERY_BROKER_URL_INTERNAL
         fromService:
           type: redis
           name: circuitree-distributed

@@ -14,7 +14,17 @@ from typing import Any, Optional
 from oscillation_parallel import OscillationTreeParallel
 from tf_network import TFNetworkModel
 
-_redis_url = os.environ["CELERY_BROKER_URL"]
+_redis_url = os.environ.get("CELERY_BROKER_URL", "")
+if _redis_url:
+    ssl_kwargs = dict(
+        broker_use_ssl=ssl.CERT_NONE,
+        redis_backend_use_ssl={"ssl_cert_reqs": ssl.CERT_NONE},
+    )
+else:
+    # Some apps use redis:// url, no SSL needed
+    _redis_url = os.environ["CELERY_BROKER_URL_INTERNAL"]
+    ssl_kwargs = dict()
+
 # if not _redis_url:
 #     _redis_url = Path(
 #         "~/git/circuitree-paper/oscillation/celery/.redis-url"
@@ -23,13 +33,12 @@ _redis_url = os.environ["CELERY_BROKER_URL"]
 app = Celery(
     "tasks",
     broker=_redis_url,
-    broker_use_ssl=ssl.CERT_NONE,
     backend=_redis_url,
-    redis_backend_use_ssl={"ssl_cert_reqs": ssl.CERT_NONE},
     # broker_connection_retry_on_startup=False,
     broker_connection_retry_on_startup=True,
     worker_cancel_long_running_tasks_on_connection_loss=True,
     task_compression="gzip",
+    **ssl_kwargs,
 )
 app.conf["broker_transport_options"] = {
     "fanout_prefix": True,
@@ -267,11 +276,11 @@ class OscillationTreeCelery(OscillationTreeParallel):
 
         # Submit the tasks as a group and wait for them to finish, with a timeout
         task_group = group(self.run_task.s(*args, **kwargs) for args in input_args)
-        task_indices = {task: i for i, task in enumerate(task_group.tasks)}
         rewards = [np.nan] * self.batch_size
         sim_times = [np.nan] * self.batch_size
         try:
             group_result: GroupResult | AsyncResult = task_group.delay()
+            result_indices = {res.id: i for i, res in enumerate(group_result.results)}
             for result, val in group_result.collect():
                 if (
                     isinstance(val, tuple)
@@ -279,7 +288,7 @@ class OscillationTreeCelery(OscillationTreeParallel):
                     and isinstance(val[0], float)
                 ):
                     reward, sim_time = val
-                    i = task_indices[result.task_id]
+                    i = result_indices[result.id]
                     if reward >= 0:  # negative reward indicates timeout
                         rewards[i] = reward
                         sim_times[i] = sim_time
