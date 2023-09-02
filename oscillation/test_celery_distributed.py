@@ -59,10 +59,13 @@ def main(
     print(f"Making {n_trees} search trees with batch size {batch_size}.")
     print(f"Reading parameter table from {param_sets_csv}")
     print(f"Saving results to {master_save_dir}")
-    with Pool(n_trees) as pool:
-        print()
-        print("Starting tree search...")
-        pool.map(run_search_in_parallel, seeds)
+    if n_trees == 1:
+        run_search_in_parallel(seeds[0])
+    else:
+        with Pool(n_trees) as pool:
+            print()
+            print("Starting tree search...")
+            pool.map(run_search_in_parallel, seeds)
 
 
 if __name__ == "__main__":
