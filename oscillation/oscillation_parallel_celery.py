@@ -13,14 +13,11 @@ from typing import Any, Optional
 from oscillation_parallel import OscillationTreeParallel
 from tf_network import TFNetworkModel
 
-_redis_url = os.environ.get("CELERY_BROKER_URL", None)
-if not _redis_url:
-    _redis_url = (
-        Path("~/git/circuitree-paper/oscillation/celery/.redis-url")
-        .expanduser()
-        .read_text()
-        .strip()
-    )
+_redis_url = os.environ["CELERY_BROKER_URL"]
+# if not _redis_url:
+#     _redis_url = Path(
+#         "~/git/circuitree-paper/oscillation/celery/.redis-url"
+#     ).expanduser()
 
 app = Celery(
     "tasks",

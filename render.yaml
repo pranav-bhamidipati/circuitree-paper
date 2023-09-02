@@ -21,7 +21,7 @@ services:
     region: ohio
     env: python
     buildCommand: "poetry update && poetry install"
-    startCommand: "poetry run gunicorn app:app"
+    startCommand: "cd oscillation %% poetry run gunicorn oscillation_parallel_celery:app"
     autoDeploy: false
     envVars:
       - key: CELERY_BROKER_URL
