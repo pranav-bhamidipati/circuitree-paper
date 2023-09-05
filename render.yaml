@@ -1,38 +1,4 @@
 services:
-  - type: worker
-    name: queue
-    region: ohio
-    env: python
-    buildCommand: "poetry update && poetry install"
-    startCommand: "cd oscillation && poetry run celery --app oscillation_parallel_celery.app worker -P processes --loglevel info"
-    autoDeploy: false
-    envVars:
-      - key: CELERY_BROKER_URL_INTERNAL
-        fromService:
-          name: circuitree-distributed
-          type: redis
-          property: connectionString
-      - key: POETRY_VERSION
-        value: "1.6.1"
-      - key: PYTHON_VERSION
-        value: "3.10.7"
-  - type: web
-    name: app
-    region: ohio
-    env: python
-    buildCommand: "poetry update && poetry install"
-    startCommand: "cd oscillation && poetry run gunicorn oscillation_parallel_celery:app"
-    autoDeploy: false
-    envVars:
-      - key: CELERY_BROKER_URL_INTERNAL
-        fromService:
-          name: circuitree-distributed
-          type: redis
-          property: connectionString
-      - key: POETRY_VERSION
-        value: "1.6.1"
-      - key: PYTHON_VERSION
-        value: "3.10.7"
   - type: web
     name: flower
     region: ohio
