@@ -1,4 +1,5 @@
 from circuitree import SimpleNetworkTree
+from more_itertools import chunked_even
 from numba import stencil, njit
 import numpy as np
 from scipy.signal import correlate
@@ -124,6 +125,16 @@ class TFNetworkModel:
     def run_ssa_with_params(self, pop0, params, seed=None, maxiter_ok=True):
         return self.ssa.run_with_params(pop0, params, seed=seed, maxiter_ok=maxiter_ok)
 
+    def run_ssa_with_params_in_chunks(
+        self, pop0, params, nchunks=1, seed=None, maxiter_ok=True
+    ):
+        """Run the simulation, splitting time into nchunks chunks. This allows the
+        simulation to be interrupted by KeyboardInterrupt/SIGINT. Otherwise,
+        Numba-compiled code will not respond to signals other than SIGKILL."""
+        return self.ssa.run_with_params_in_chunks(
+            pop0, params, nchunks, seed=seed, maxiter_ok=maxiter_ok
+        )
+
     def run_batch_with_params(self, pop0, params, n, seed=None, maxiter_ok=True):
         pop0 = np.asarray(pop0)
         params = np.asarray(params)
@@ -245,10 +256,13 @@ class TFNetworkModel:
         seed: Optional[int] = None,
         abs: bool = False,
         maxiter_ok: bool = True,
+        nchunks: int = 1,
     ) -> tuple[np.ndarray, float]:
         """Run an initialized SSA with the given parameters and get the autocorrelation"""
         pop0 = self.ssa.population_from_proteins(prots0)
-        y_t = self.run_ssa_with_params(pop0, params, seed=seed, maxiter_ok=maxiter_ok)
+        y_t = self.run_ssa_with_params_in_chunks(
+            pop0, params, nchunks=nchunks, seed=seed, maxiter_ok=maxiter_ok
+        )
         prots_t = y_t[..., self.m : self.m * 2]
         if np.isnan(prots_t).any():
             acf_minimum = np.nan

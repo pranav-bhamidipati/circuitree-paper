@@ -812,6 +812,11 @@ class GillespieSSA:
         """ """
         return _population_from_proteins(proteins, fill_value, self.m, self.n_species)
 
+    def set_time_points(self, t: np.ndarray) -> None:
+        self.dt = t[1] - t[0]
+        self.nt = len(t)
+        self.time_points = np.array(t, dtype=np.float64)
+
     def gillespie_trajectory(
         self,
         population_0,
@@ -900,6 +905,29 @@ class GillespieSSA:
         return self.gillespie_trajectory(
             pop0, *ssa_params, seed=seed, maxiter_ok=maxiter_ok
         )
+
+    def run_with_params_in_chunks(
+        self, pop0, params, nchunks=1, seed=None, maxiter_ok=True
+    ):
+        """Run the simulation, splitting time into nchunks chunks. This allows the
+        simulation to be interrupted by KeyboardInterrupt/SIGINT. Otherwise,
+        Numba-compiled code will not respond to signals other than SIGKILL."""
+        ssa_params = self.package_params_for_ssa(params)
+        time_points = self.time_points
+        nt_chunk, chunk_mod = divmod(self.nt, nchunks)
+        if chunk_mod > 0:
+            nt_chunk += 1
+        pop_t = np.zeros((self.nt, self.n_species), dtype=np.int64)
+        pop0_chunk = pop0
+        for i in range(0, self.nt, nt_chunk):
+            t_chunk = time_points[i : i + nt_chunk + 1]
+            self.set_time_points(t_chunk)
+            pop_t_chunk = self.gillespie_trajectory(
+                pop0_chunk, *ssa_params, seed=seed, maxiter_ok=maxiter_ok
+            )
+            pop_t[i : i + nt_chunk] = pop_t_chunk[:nt_chunk]
+            pop0_chunk = pop_t_chunk[-1]
+        return pop_t
 
     def run_random_sample(self, seed: Optional[int] = None, maxiter_ok: bool = True):
         """ """
