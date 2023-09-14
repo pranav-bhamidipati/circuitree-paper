@@ -1,32 +1,34 @@
-import os
+from functools import cached_property
 from billiard.exceptions import TimeLimitExceeded
-from celery import Celery, group
-from celery.exceptions import SoftTimeLimitExceeded
+from celery import Celery, Task, group
+from celery.exceptions import SoftTimeLimitExceeded, TimeoutError
 from celery.utils.log import get_task_logger
 from celery.result import AsyncResult, GroupResult
 from circuitree.parallel import TranspositionTable
 import h5py
 import numpy as np
 from pathlib import Path
-from kombu.exceptions import OperationalError
-import ssl
-from time import perf_counter, sleep
-from typing import Any, Optional
-
+from time import perf_counter
+from typing import Any, Iterable, Optional
 
 from oscillation_parallel import OscillationTreeParallel
 from tf_network import TFNetworkModel
 
-_redis_url = os.environ.get("CELERY_BROKER_URL", "")
-if _redis_url:
-    ssl_kwargs = dict(
-        broker_use_ssl=ssl.CERT_NONE,
-        redis_backend_use_ssl={"ssl_cert_reqs": ssl.CERT_NONE},
-    )
-else:
-    # Some apps use redis:// url, no SSL needed
-    _redis_url = os.environ["CELERY_BROKER_URL_INTERNAL"]
-    ssl_kwargs = dict()
+# from kombu.exceptions import OperationalError
+
+# import os
+# import ssl
+
+# _redis_url = os.environ.get("CELERY_BROKER_URL", "")
+# if _redis_url:
+#     ssl_kwargs = dict(
+#         broker_use_ssl=ssl.CERT_NONE,
+#         redis_backend_use_ssl={"ssl_cert_reqs": ssl.CERT_NONE},
+#     )
+# else:
+#     # Some apps use redis:// url, no SSL needed
+#     _redis_url = os.environ["CELERY_BROKER_URL_INTERNAL"]
+#     ssl_kwargs = dict()
 
 # if not _redis_url:
 #     _redis_url = Path(
@@ -35,23 +37,24 @@ else:
 
 app = Celery(
     "tasks",
-    broker=_redis_url,
-    backend=_redis_url,
+    # broker=_redis_url,
+    # backend=_redis_url,
     # broker_connection_retry_on_startup=False,
-    broker_connection_retry_on_startup=True,
-    worker_cancel_long_running_tasks_on_connection_loss=True,
-    task_compression="gzip",
-    **ssl_kwargs,
+    # broker_connection_retry_on_startup=True,
+    # worker_prefetch_multiplier=1,
+    # worker_cancel_long_running_tasks_on_connection_loss=True,
+    # task_compression="gzip",
+    # **ssl_kwargs,
 )
-app.conf["broker_transport_options"] = {
-    "fanout_prefix": True,
-    "fanout_patterns": True,
-    "socket_keepalive": True,
-}
+# app.conf["broker_transport_options"] = {
+#     "fanout_prefix": True,
+#     "fanout_patterns": True,
+# "socket_keepalive": True,
+# }
 task_logger = get_task_logger(__name__)
 
 
-@app.task(soft_time_limit=120, time_limit=150)
+@app.task(soft_time_limit=120, time_limit=300, queue="simulations")
 def run_ssa(
     seed: int,
     prots0: list[int],
@@ -80,13 +83,36 @@ def run_ssa(
     )
     try:
         task_logger.info(f"Running SSA with {seed=}, {state=}")
-        reward, sim_time = _run_ssa(**kwargs)
+        prots_t, autocorr_min, sim_time = _run_ssa(**kwargs)
+        kwargs |= dict(
+            autocorr_min=float(autocorr_min),
+            sim_time=float(sim_time),
+            prots_t=prots_t.tolist(),
+        )
+
+        if autocorr_min == 1.0:
+            task_logger.info(
+                "Simulation returned NaNs - maxiter_per_timestep exceeded."
+            )
+            reward = -1.0  # serializable, unlike np.nan
+            if save_nans:
+                _save_results.delay(prefix="nan_", **kwargs)
+        else:
+            task_logger.info(f"Finished with autocorr. minimum: {autocorr_min:.4f}")
+            oscillated = -autocorr_min > autocorr_threshold
+            reward = float(oscillated)
+            if oscillated:
+                task_logger.info("Oscillation detected, saving results.")
+                _save_results.delay(prefix="osc_", **kwargs)
+            else:
+                task_logger.info("No oscillations detected.")
+
         return reward, sim_time
 
     except Exception as e:
         if isinstance(e, SystemError) or isinstance(e, SoftTimeLimitExceeded):
-            reward = sim_time = -1.0
-            _save_results(prefix="timeout_", **kwargs)
+            task_logger.info(f"Soft time limit exceeded, writing metadata to file.")
+            _save_results.delay(prefix="timeout_", **kwargs)
             return -1.0, -1.0
         else:
             raise
@@ -100,13 +126,10 @@ def _run_ssa(
     dt: float,
     nt: int,
     max_iter_per_timestep: int,
-    autocorr_threshold: float,
-    save_dir: Path,
-    save_nans: bool,
-    exist_ok: bool,
+    **kwargs,
 ):
     start = perf_counter()
-    task_logger.info("Initializing model")
+    task_logger.info("Initializing model and running SSA...")
     model = TFNetworkModel(
         genotype=state,
         seed=seed,
@@ -115,48 +138,22 @@ def _run_ssa(
         max_iter_per_timestep=max_iter_per_timestep,
         initialize=True,
     )
-    task_logger.info("Running SSA...")
     prots_t, autocorr_min = model.run_with_params_and_get_acf_minimum(
         prots0=np.array(prots0),
         params=np.array(params),
         maxiter_ok=True,
         abs=False,
+        nchunks=5,  # simulation is split into 5 chunks - can be interrupted more easily
     )
     end = perf_counter()
     sim_time = end - start
     task_logger.info(f"Finished SSA in {sim_time:.4f}s")
-
-    # Handle results and save to data dir on worker-side
-    save_kw = dict(
-        seed=seed,
-        state=state,
-        dt=dt,
-        nt=nt,
-        max_iter_per_timestep=max_iter_per_timestep,
-        autocorr_threshold=autocorr_threshold,
-        save_dir=save_dir,
-        exist_ok=exist_ok,
-        autocorr_min=autocorr_min,
-        sim_time=sim_time,
-        prots_t=prots_t,
-    )
     if np.isnan(autocorr_min):
-        task_logger.info("Simulation returned NaNs - maxiter_per_timestep exceeded.")
-        reward = -1.0  # serializable, unlike np.nan
-        if save_nans:
-            _save_results(prefix="nan_", **save_kw)
-    else:
-        task_logger.info(f"Finished with autocorr. minimum: {autocorr_min:.4f}")
-        reward = float(-autocorr_min > autocorr_threshold)
-        if reward:
-            task_logger.info("Oscillation detected, saving results.")
-            _save_results(prefix="osc_", **save_kw)
-        else:
-            task_logger.info("No oscillations detected.")
-
-    return reward, sim_time
+        autocorr_min = 1.0  # positive value to indicate maxiter exceeded
+    return prots_t, autocorr_min, sim_time
 
 
+@app.task(queue="io", ignore_result=True)
 def _save_results(
     seed: int,
     state: str,
@@ -167,9 +164,9 @@ def _save_results(
     save_dir: Path,
     exist_ok: bool,
     prefix: str,
-    autocorr_min: float | np.float64 = np.nan,
-    sim_time: float | np.float64 = np.nan,
-    prots_t: np.ndarray = np.array([]),
+    autocorr_min: float = 1.0,
+    sim_time: float = -1.0,
+    prots_t: list[tuple[float, ...]] = None,
     **kwargs,
 ):
     fname = f"{prefix}state_{state}_seed{seed}.hdf5"
@@ -179,6 +176,8 @@ def _save_results(
             return
         else:
             raise FileExistsError(fpath)
+    if prots_t is None:
+        prots_t = []
     task_logger.info(f"Saving results to {fpath}")
     with h5py.File(fpath, "w") as f:
         f.create_dataset("y_t", data=prots_t)
@@ -213,16 +212,16 @@ class OscillationTreeCelery(OscillationTreeParallel):
         save_ttable_every: int = 10,
         sim_time_table: Optional[TranspositionTable] = None,
         logger: Any = None,
+        time_limit: int = 120,
         *args,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
 
-        self.run_task = run_ssa
         self._simulation_time_table = TranspositionTable(sim_time_table)
-
         self.iteration_counter = 0
         self.save_ttable_every = save_ttable_every
+        self.time_limit = time_limit
 
         if logger is None:
             self.logger = task_logger
@@ -244,11 +243,12 @@ class OscillationTreeCelery(OscillationTreeParallel):
 
         self.add_done_callback(save_ttable_every_n_iters)
 
-        # self.run_task.soft_time_limit = time_limit
-        # self.time_limit = time_limit
-
-        # # Specify any attributes that should not be serialized when dumping to file
+        # Specify any attributes that should not be serialized when dumping to file
         self._non_serializable_attrs.extend(["_simulation_time_table", "logger"])
+
+    @property
+    def run_task(self) -> Task:
+        return run_ssa
 
     @property
     def simtime_table(self):
@@ -259,53 +259,50 @@ class OscillationTreeCelery(OscillationTreeParallel):
         return
 
     def compute_tasks_and_handle_errors(
-        self, iter_args, n_retries=5, **kwargs
+        self, iter_args, n_retries: int = 5, **kwargs
     ) -> tuple[list[float], list[float]]:
         task_group = group(self.run_task.s(*args, **kwargs) for args in iter_args)
-        submitted = False
-        retries_left = n_retries
-        while True:
-            try:
-                if not submitted:
-                    group_result: AsyncResult | GroupResult = task_group.delay()
-                    submitted = True
-                rewards, sim_times = self.compute_tasks_and_collect(group_result)
-                break
-            except OperationalError:
-                if retries_left == 0:
-                    self.logger.warning(
-                        f"Received {n_retries}/{n_retries} OperationalErrors. Giving up."
-                    )
-                    raise
-                else:
-                    retries_left -= 1
-                    self.logger.info(
-                        f"Received OperationalError. Too many requests? Retrying..."
-                    )
-                    sleep(np.random.uniform(0.5, 3.0))
-
-        return rewards, sim_times
-
-    def compute_tasks_and_collect(
-        self, group_result: AsyncResult | GroupResult
-    ) -> tuple[list[float], list[float]]:
-        rewards = [np.nan] * self.batch_size
-        sim_times = [np.nan] * self.batch_size
+        group_result: GroupResult | AsyncResult = task_group.apply_async(
+            retry=True, retry_policy={"max_retries": n_retries}
+        )
         try:
-            for i, result in enumerate(group_result.results):
-                reward, sim_time = result.get()
-                if reward >= 0:  # negative reward indicates soft timeout
-                    rewards[i] = reward
-                    sim_times[i] = sim_time
-        except TimeLimitExceeded:  # hard timeout
-            # Cancel the tasks that are still running
-            n_cancelled = self.batch_size - group_result.completed_count()
-            self.logger.info(
-                f"Hard time limit exceeded, canceling {n_cancelled}/{self.batch_size} tasks."
-            )
-            group_result.revoke(terminate=True)
+            results = group_result.get(timeout=self.time_limit)
+            rewards, sim_times = zip(*results)
+        except Exception as e:
+            # get() timed out or task received hard timeout
+            if isinstance(e, (TimeoutError, TimeLimitExceeded)):
+                rewards = []
+                sim_times = []
+                revoked = 0
+                results: Iterable[AsyncResult] = group_result.results
+                for result in results:
+                    if result.ready():
+                        reward, sim_time = result.get()
+                        r = reward if reward >= 0 else np.nan
+                        s = sim_time if reward >= 0 else np.nan
+                    else:
+                        # Cancel any running tasks - SIGINT signal is equivalent to
+                        # KeyboardInterrupt and is a softer terminate signal than the
+                        # default (SIGTERM)
+                        revoked += 1
+                        result.revoke(terminate=True, signal="SIGINT")
+                        r = np.nan
+                        s = np.nan
+                    rewards.append(r)
+                    sim_times.append(s)
+                self.logger.info(f"Time limit exceeded, canceled {revoked} tasks.")
 
         return rewards, sim_times
+
+    @cached_property
+    def task_kwargs(self) -> dict[str, Any]:
+        return dict(
+            dt=float(self.dt),
+            nt=int(self.nt),
+            autocorr_threshold=float(self.autocorr_threshold),
+            max_iter_per_timestep=int(self.max_iter_per_timestep),
+            save_dir=str(self.save_dir),
+        )
 
     def simulate_visits(self, state, visits) -> tuple[list[float], dict[str, Any]]:
         # Make the input args JSON serializable
@@ -316,19 +313,10 @@ class OscillationTreeCelery(OscillationTreeParallel):
                 (int(seed), list(map(int, inits)), list(map(float, params)))
             )
 
-        # Specify the keyword arguments
-        kwargs = dict(
-            state=str(state),
-            dt=float(self.dt),
-            nt=int(self.nt),
-            autocorr_threshold=float(self.autocorr_threshold),
-            max_iter_per_timestep=int(self.max_iter_per_timestep),
-            save_dir=str(self.save_dir),
+        # Submit the tasks and wait for them to finish, handling timeouts and retries
+        rewards, sim_times = self.compute_tasks_and_handle_errors(
+            input_args, state=str(state), **self.task_kwargs
         )
-
-        # Submit the tasks as a group and wait for them to finish, with a timeout
-        rewards, sim_times = self.compute_tasks_and_handle_errors(input_args, **kwargs)
-
         self.simtime_table[state].extend(list(sim_times))
 
         return rewards, {}
