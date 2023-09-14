@@ -28,7 +28,8 @@ pyarrow = "^12.0.1"
 circuitree = "^0.6.2"
 celery = { extras = ["redis"], version = "^5.3.1" }
 flower = "^2.0.1"
-gunicorn = "^21.2.0"
+eventlet = { git = "https://github.com/eventlet/eventlet.git", rev = "caf9f9983a43c537efff5c4c9ff1d543af6e1220" }
+redis = {extras = ["hiredis"], version = "^5.0.0"}
 
 [tool.poetry.group.dev.dependencies]
 black = "^23.7.0"
