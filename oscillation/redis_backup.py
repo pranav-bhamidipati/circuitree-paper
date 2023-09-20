@@ -6,6 +6,7 @@ import json
 import pandas as pd
 from pathlib import Path
 import redis
+from tqdm import tqdm
 
 
 def main(
@@ -26,7 +27,8 @@ def main(
     # Convert redis data to parquet-formatted DataFrame
     _unpack = lambda k, vs: (int(k.decode()), *map(float, json.loads(vs.decode())))
     data = []
-    for key in keys_to_backup:
+    print(f"Backing up {len(keys_to_backup)} keys...")
+    for key in tqdm(keys_to_backup):
         visits, autocorr_mins, sim_times = zip(
             *(_unpack(k, v) for k, v in r.hgetall(key).items())
         )
@@ -62,6 +64,6 @@ def main(
 if __name__ == "__main__":
     save_dir = Path("~/git/circuitree-paper/data/oscillation/backups").expanduser()
     main(
-        # prefix="mcts_3tf_",
+        prefix="mcts_5tf_",
         save_dir=save_dir,
     )
