@@ -1,5 +1,6 @@
 import warnings
-from circuitree import SimpleNetworkTree
+from circuitree import CircuiTree
+from circuitree.models import SimpleNetworkGrammar
 from functools import cache, cached_property
 import h5py
 from itertools import permutations
@@ -11,35 +12,7 @@ from uuid import uuid4
 from tf_network import TFNetworkModel
 
 
-class OscillationTree(SimpleNetworkTree):
-    def __init__(
-        self,
-        time_points: Optional[np.ndarray[np.float64]] = None,
-        success_threshold: float = 0.005,
-        autocorr_threshold: float = 0.4,
-        init_mean: float = 10.0,
-        dt: Optional[float] = None,
-        nt: Optional[int] = None,
-        batch_size: int = 1,
-        max_iter_per_timestep: int = 100_000_000,
-        save_dir: Optional[str | Path] = None,
-        **kwargs,
-    ):
-        super().__init__(**kwargs)
-
-        self.time_points = time_points
-        self.autocorr_threshold = autocorr_threshold
-        self.success_threshold = success_threshold
-
-        self.dt = dt
-        self.nt = nt
-        self.init_mean = init_mean
-        self.batch_size = batch_size
-
-        self.max_iter_per_timestep = max_iter_per_timestep
-
-        self.save_dir = save_dir
-
+class OscillationGrammar(SimpleNetworkGrammar):
     @cached_property
     def _recolor(self):
         return [dict(zip(self.components, p)) for p in permutations(self.components)]
@@ -115,6 +88,36 @@ class OscillationTree(SimpleNetworkTree):
         payout = self.graph.nodes[state]["reward"]
         visits = self.graph.nodes[state]["visits"]
         return visits > 0 and payout / visits > self.success_threshold
+
+
+class OscillationTree(CircuiTree, OscillationGrammar):
+    def __init__(
+        self,
+        time_points: Optional[np.ndarray[np.float64]] = None,
+        success_threshold: float = 0.005,
+        autocorr_threshold: float = 0.4,
+        init_mean: float = 10.0,
+        dt: Optional[float] = None,
+        nt: Optional[int] = None,
+        batch_size: int = 1,
+        max_iter_per_timestep: int = 100_000_000,
+        save_dir: Optional[str | Path] = None,
+        **kwargs,
+    ):
+        super().__init__(**kwargs)
+
+        self.time_points = time_points
+        self.autocorr_threshold = autocorr_threshold
+        self.success_threshold = success_threshold
+
+        self.dt = dt
+        self.nt = nt
+        self.init_mean = init_mean
+        self.batch_size = batch_size
+
+        self.max_iter_per_timestep = max_iter_per_timestep
+
+        self.save_dir = save_dir
 
     def get_reward(
         self,
