@@ -32,7 +32,7 @@ def main(
         visits, autocorr_mins, sim_times = zip(
             *(_unpack(k, v) for k, v in r.hgetall(key).items())
         )
-        state_name = "*" + str(key.decode()).strip("state_")
+        state_name = "*" + str(key.decode()).lstrip("state_")
         state_data = pd.DataFrame(
             {
                 "state": state_name,
