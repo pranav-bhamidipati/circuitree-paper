@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "circuitree-paper"
-version = "0.1.0"
+version = "0.2.0a0"
 description = ""
 authors = ["pranav-bhamidipati <pbhamidi@usc.edu>"]
 license = "GPLv3"
@@ -25,11 +25,12 @@ ray = "^2.6.2"
 dask = "^2023.8.0"
 tables = "^3.8.0"
 pyarrow = "^12.0.1"
-circuitree = "^0.6.2"
 celery = { extras = ["redis"], version = "^5.3.1" }
 flower = "^2.0.1"
 eventlet = { git = "https://github.com/eventlet/eventlet.git", rev = "caf9f9983a43c537efff5c4c9ff1d543af6e1220" }
-redis = {extras = ["hiredis"], version = "^5.0.0"}
+redis = { extras = ["hiredis"], version = "^5.0.0" }
+circuitree = { git = "https://github.com/pranav-bhamidipati/circuitree.git", rev = "main" }
+gevent = "^23.9.1"
 
 [tool.poetry.group.dev.dependencies]
 black = "^23.7.0"
