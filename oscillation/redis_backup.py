@@ -17,6 +17,7 @@ def main(
     save_dir: str | Path = None,
     prefix="",
     tz_offset=-7,  # Pacific Time
+    **kwargs,
 ):
     # Connect to redis
     r = redis.Redis(host=host, port=port, db=db)
