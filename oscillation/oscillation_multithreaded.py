@@ -5,6 +5,7 @@ monkey.patch_all()
 from collections import Counter
 from gevent import Greenlet, getcurrent
 from gevent.event import Event
+from gevent.queue import Queue
 from greenlet import greenlet
 from threading import current_thread
 from celery.result import AsyncResult
@@ -33,6 +34,7 @@ class MultithreadedOscillationTree(OscillationGrammar, MultithreadedCircuiTree):
         nchunks: int = 5,
         database: redis.Redis = database,
         min_ssa_seed: Optional[int] = None,
+        queue_size: Optional[int] = None,
         logger=None,
         **kwargs,
         # max_iter_per_timestep: int = 100_000_000,
@@ -49,7 +51,11 @@ class MultithreadedOscillationTree(OscillationGrammar, MultithreadedCircuiTree):
         self.backup_not_in_progress = Event()
         self.backup_not_in_progress.set()
         self.last_backup_iteration: int = -1
+        self.next_backup_iteration: int = 0
         self.current_iteration = Counter()
+
+        self.queue_size = queue_size or 0
+        self.result_history = Queue(maxsize=self.queue_size)
 
         if not save_dir:
             raise ValueError("Must specify a save directory.")
@@ -73,6 +79,7 @@ class MultithreadedOscillationTree(OscillationGrammar, MultithreadedCircuiTree):
                 "backup_not_in_progress",
                 "last_backup_iteration",
                 "current_iteration",
+                "visited_states",
             ]
         )
 
@@ -110,6 +117,8 @@ class MultithreadedOscillationTree(OscillationGrammar, MultithreadedCircuiTree):
             f"Autocorr. min. of {autocorr_min:.4f} for visit {visit_number} "
             f"to state {state}. Oscillating? {bool(reward)}."
         )
+        self.backup_not_in_progress.wait()
+        self.result_history.put((state, reward))
         return reward
 
 
@@ -134,8 +143,8 @@ def progress_and_backup_in_thread(
     mtree: MultithreadedOscillationTree,
     iteration: int,
     *args,
-    backup_every: int,
     db_backup_dir: str | Path,
+    backup_every: int = 5_000,
     gml_file: Optional[str | Path] = None,
     json_file: Optional[str | Path] = None,
     tz_offset: int = -7,
@@ -143,6 +152,7 @@ def progress_and_backup_in_thread(
     db_keyset: str = "transposition_table_keys",
     db_backup_prefix: str = "mcts_5tf_",
     db_kwargs: dict = None,
+    backup_visits: bool = True,
     **kwargs,
 ):
     """Callback function to report progress of MCTS search and save the tree to disk."""
@@ -154,14 +164,13 @@ def progress_and_backup_in_thread(
         )
 
     # Perform backups
-    if overall_iteration % backup_every == 0:
+    if overall_iteration > mtree.next_backup_iteration:
         if (
             mtree.backup_not_in_progress.is_set()
             and mtree.last_backup_iteration < overall_iteration
         ):
             # First thread to reach this point will perform the backup
             mtree.backup_not_in_progress.clear()
-            mtree.last_backup_iteration = overall_iteration
         else:
             # Other threads remain blocked until the backup is complete.
             if iteration == 0:
@@ -222,7 +231,25 @@ def progress_and_backup_in_thread(
             tz_offset=tz_offset,
             **(db_kwargs or {}),
         )
-        mtree.logger.info(f"Database backup complete. Resuming search.")
+        mtree.logger.info(f"Database backup complete.")
+
+        if backup_visits:
+            mtree.logger.info(f"Backing up visited states...")
+            visit_results_file = Path(mtree.save_dir).joinpath(
+                f"results_steps{mtree.last_backup_iteration+1}-{overall_iteration}"
+                f"_{mtree.tree_id}_{now}.txt"
+            )
+
+            # gevent Queue object can be called as an iterator, calling get() repeatedly.
+            # This clears the queue. Note that StopIteration is required, otherwise the
+            # iterator won't terminate and get() will block indefinitely.
+            mtree.result_history.put(StopIteration)
+            visit_results = [
+                ",".join(state, str(reward)) for state, reward in mtree.result_history
+            ]
+            visit_results_file.write_text("\n".join(visit_results))
 
         # Release all threads
+        mtree.last_backup_iteration = overall_iteration
+        mtree.next_backup_iteration = overall_iteration + backup_every
         mtree.backup_not_in_progress.set()
