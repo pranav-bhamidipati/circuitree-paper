@@ -3,6 +3,7 @@
 
 import datetime
 import json
+import numpy as np
 import pandas as pd
 from pathlib import Path
 import redis
@@ -17,8 +18,13 @@ def main(
     save_dir: str | Path = None,
     prefix="",
     tz_offset=-7,  # Pacific Time
+    progress_bar: bool = True,
+    print_progress: bool = False,
     **kwargs,
 ):
+    if print_progress and progress_bar:
+        raise ValueError("print_progress and progress_bar cannot both be True.")
+
     # Connect to redis
     r = redis.Redis(host=host, port=port, db=db)
 
@@ -28,8 +34,15 @@ def main(
     # Convert redis data to parquet-formatted DataFrame
     _unpack = lambda k, vs: (int(k.decode()), *map(float, json.loads(vs.decode())))
     data = []
+
+    if print_progress:
+        print_points = np.linspace(0, len(keys_to_backup), 11)
+        next_print_idx = 1
+        next_print_point = print_points[next_print_idx]
+
     print(f"Backing up {len(keys_to_backup)} keys...")
-    for key in tqdm(keys_to_backup):
+    iterator = tqdm(keys_to_backup) if progress_bar else keys_to_backup
+    for i, key in enumerate(iterator):
         visits, autocorr_mins, sim_times = zip(
             *(_unpack(k, v) for k, v in r.hgetall(key).items())
         )
@@ -43,6 +56,13 @@ def main(
             }
         )
         data.append(state_data)
+
+        if print_progress:
+            if i >= next_print_point:
+                print(f"{next_print_idx * 10}% complete.")
+                next_print_idx += 1
+                next_print_point = print_points[next_print_idx]
+
     df = pd.concat(data).sort_values(["state", "visit"])
     df["state"] = df["state"].astype("category")
 
@@ -59,7 +79,7 @@ def main(
     )
     print(f"Saving backup to: {filepath}")
     df.to_parquet(filepath, index=False)
-    print("Done.")
+    print("Database backup complete.")
 
 
 if __name__ == "__main__":
