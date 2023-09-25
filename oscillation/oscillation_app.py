@@ -14,7 +14,10 @@ INT64_MAXVAL = np.iinfo(np.int64).max
 app = Celery("tasks")
 app.config_from_object("celeryconfig")
 task_logger = get_task_logger(__name__)
-database = redis.Redis(host="localhost", port=6379, db=0)
+host, port = app.conf["broker_url"].split("//")[1].split(":")
+port = int(port.split("/")[0])
+database = redis.Redis(host=host, port=port, db=0)
+# database = redis.Redis(host="localhost", port=6379, db=0)
 n_param_sets = database.hlen("parameter_table")
 
 
