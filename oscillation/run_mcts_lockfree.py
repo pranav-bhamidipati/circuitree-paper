@@ -121,6 +121,7 @@ if __name__ == "__main__":
     log_file = Path(
         f"~/git/circuitree-paper/logs/oscillation/mcts/{now}/main.log"
     ).expanduser()
+    log_file.parent.mkdir()
     logging.basicConfig(
         filename=str(log_file),
         filemode="a",
