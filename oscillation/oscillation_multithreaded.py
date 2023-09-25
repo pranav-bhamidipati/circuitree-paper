@@ -236,7 +236,7 @@ def progress_and_backup_in_thread(
         )
         mtree.logger.info(f"Database backup complete.")
 
-        if backup_visits:
+        if backup_visits and iteration:
             last_backed_up = mtree.last_backed_up_iteration
             mtree.logger.info(
                 f"Backing up states visited at steps "

@@ -82,6 +82,7 @@ def main(
             gml_file=gml_file,
             json_file=json_file,
             keep_single_gml_backup=True,
+            backup_visits=True,
         )
 
         run_search = partial(
