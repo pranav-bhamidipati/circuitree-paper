@@ -8,6 +8,8 @@ from pathlib import Path
 import redis
 from tqdm import tqdm
 
+from oscillation_app import app
+
 
 def main(
     backup_file_pq: str | Path,
@@ -16,9 +18,7 @@ def main(
     state_keyset="transposition_table_keys",
     state_key_prefix="state_",
     prompt_on_delete=True,
-    host="localhost",
-    port=6379,
-    db=0,
+    database_url: str | Path = None,
 ):
     # Determine restore method
     if restore_method == "full":
@@ -37,8 +37,9 @@ def main(
         )
 
     # Connect to redis
-    print(f"Connecting to redis at {host}:{port}")
-    r = redis.Redis(host=host, port=port, db=db)
+    database_url = database_url or app.conf["redis"]
+    print(f"Connecting to redis at {database_url}")
+    r = redis.Redis.from_url(database_url)
 
     # Load parquet file into DataFrame
     df = pd.read_parquet(backup_file_pq, columns=column_names)
