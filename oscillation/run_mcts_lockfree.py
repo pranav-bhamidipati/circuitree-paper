@@ -116,7 +116,8 @@ if __name__ == "__main__":
         f"~/git/circuitree-paper/data/oscillation/mcts/{now}_5tf_lockfree"
     ).expanduser()
     save_dir.mkdir()
-    backup_dir = save_dir.joinpath("backups").mkdir()
+    backup_dir = save_dir.joinpath("backups")
+    backup_dir.mkdir()
 
     log_file = Path(
         f"~/git/circuitree-paper/logs/oscillation/mcts/{now}/main.log"
