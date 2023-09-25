@@ -37,7 +37,7 @@ def main(
         )
 
     # Connect to redis
-    database_url = database_url or app.conf["redis"]
+    database_url = database_url or app.conf["broker_url"]
     print(f"Connecting to redis at {database_url}")
     r = redis.Redis.from_url(database_url)
 

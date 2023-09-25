@@ -26,7 +26,7 @@ def main(
         raise ValueError("print_progress and progress_bar cannot both be True.")
 
     # Connect to redis
-    database_url = database_url or app.conf["redis"]
+    database_url = database_url or app.conf["broker_url"]
     print(f"Connecting to redis at {database_url}")
     database = redis.Redis.from_url(database_url)
 
