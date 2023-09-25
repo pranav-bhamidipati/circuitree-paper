@@ -48,7 +48,7 @@ class MultithreadedOscillationTree(OscillationGrammar, MultithreadedCircuiTree):
         self.nchunks = nchunks
         self.success_threshold = success_threshold
 
-        self.tree_id = uuid4()
+        self.tree_id = str(uuid4())
         self.backup_not_in_progress = Event()
         self.backup_not_in_progress.set()
         self.last_backed_up_iteration: int = 0
@@ -78,10 +78,10 @@ class MultithreadedOscillationTree(OscillationGrammar, MultithreadedCircuiTree):
                 "logger",
                 "database",
                 "backup_not_in_progress",
-                "last_backup_iteration",
+                "last_backed_up_iteration",
                 "next_backup_time",
                 "current_iteration",
-                "visited_states",
+                "result_history",
             ]
         )
 
