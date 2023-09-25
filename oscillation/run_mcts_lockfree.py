@@ -77,7 +77,6 @@ def main(
         json_file = backup_dir / f"{now}_tree_metadata.json"
         callback = partial(
             progress_and_backup_in_thread,
-            mtree=mtree,
             db_backup_dir=backup_dir,
             backup_every=backup_every,
             gml_file=gml_file,
@@ -96,8 +95,8 @@ def main(
         start_msg = f"Starting searches in {threads} threads...\n"
         print(start_msg)
         mtree.logger.info(start_msg)
-        threads = [gevent.spawn(run_search, i) for i in range(threads)]
-        gevent.joinall(threads)
+        gthreads = [gevent.spawn(run_search, i) for i in range(threads)]
+        gevent.joinall(gthreads)
 
         finish_msg = (
             f"Finished searches in {threads} threads. Saving results to {save_dir}"
