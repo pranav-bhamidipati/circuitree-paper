@@ -180,6 +180,11 @@ def progress_and_backup_in_thread(
                 mtree.backup_not_in_progress.wait()
             return
 
+        date_time_fmt = "%Y-%m-%d_%H-%M-%S"
+        now_fmt = datetime.datetime.now(
+            datetime.timezone(datetime.timedelta(hours=tz_offset))
+        ).strftime(date_time_fmt)
+
         mtree.logger.info(
             f"Backup triggered in thread {thread_id} at overall iteration {overall_iteration}."
         )
@@ -187,21 +192,17 @@ def progress_and_backup_in_thread(
         # Tree attributes (metadata) are only saved once
         if iteration == 0:
             json_file = (
-                json_file or Path(mtree.save_dir) / f"tree_{mtree.tree_id}_{now}.json"
+                json_file
+                or Path(mtree.save_dir) / f"tree_{mtree.tree_id}_{now_fmt}.json"
             )
         else:
             json_file = None
-
-        date_time_fmt = "%Y-%m-%d_%H-%M-%S"
-        now = datetime.datetime.now(
-            datetime.timezone(datetime.timedelta(hours=tz_offset))
-        ).strftime(date_time_fmt)
 
         if gml_file is not None:
             if gml_file.exists():
                 mtree.logger.info(f"Backup file already exists. Overwriting...")
         else:
-            gml_file = Path(mtree.save_dir) / f"tree-{mtree.tree_id}_{now}.gml"
+            gml_file = Path(mtree.save_dir) / f"tree-{mtree.tree_id}_{now_fmt}.gml"
             existing_gmls = list(gml_file.parent.glob(f"*{mtree.tree_id}*.gml"))
             if existing_gmls and keep_single_gml_backup:
                 mtree.logger.info(
@@ -243,7 +244,7 @@ def progress_and_backup_in_thread(
             )
             visit_results_file = Path(mtree.save_dir).joinpath(
                 f"results_steps{last_backed_up+1}-{overall_iteration}"
-                f"_{mtree.tree_id}_{now}.txt"
+                f"_{mtree.tree_id}_{now_fmt}.txt"
             )
 
             # gevent Queue object can be called as an iterator, calling get() repeatedly.

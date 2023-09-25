@@ -108,10 +108,10 @@ def main(
 
 
 if __name__ == "__main__":
-    from datetime import date
+    from datetime import datetime
     import logging
 
-    now = date.today().strftime("%y%m%d-%H-%M-%S")
+    now = datetime.now().strftime("%y%m%d-%H-%M-%S")
     save_dir = Path(
         f"~/git/circuitree-paper/data/oscillation/mcts/{now}_5tf_lockfree"
     ).expanduser()
