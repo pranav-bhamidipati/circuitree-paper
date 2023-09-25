@@ -72,7 +72,8 @@ def main(
 
 if __name__ == "__main__":
     backup_dir = Path("~/git/circuitree-paper/data/oscillation/backups").expanduser()
-    backup_file = backup_dir / "mcts_3tf_backup_2023-09-13_16-46-46.parquet"
+    # backup_file = backup_dir / "mcts_3tf_backup_2023-09-13_16-46-46.parquet"
+    backup_file = backup_dir / "mcts_5tf_backup_2023-09-25_11-21-54.parquet"
     main(
         backup_file_pq=backup_file,
         restore_method="partial",
