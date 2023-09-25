@@ -1,3 +1,4 @@
+from time import perf_counter
 from gevent import monkey
 
 monkey.patch_all()
@@ -216,10 +217,11 @@ def progress_and_backup_in_thread(
         if json_file is not None:
             mtree.logger.info(f"Backing up tree metadata to file: {json_file}")
 
+        start = perf_counter()
         mtree.to_file(gml_file, json_file, compress=True)
-        mtree.logger.info(
-            f"Tree backup complete. Backing up transposition table database..."
-        )
+        end = perf_counter()
+        mtree.logger.info(f"Tree backup completed in {end-start:.4f} seconds.")
+        mtree.logger.info(f"Backing up transposition table database...")
         database_info = mtree.database.connection_pool.connection_kwargs
         backup_database(
             keyset=db_keyset,
