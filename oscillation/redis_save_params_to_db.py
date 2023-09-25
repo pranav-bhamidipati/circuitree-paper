@@ -1,6 +1,5 @@
 import json
 import redis
-import numpy as np
 import pandas as pd
 from pathlib import Path
 
@@ -39,9 +38,12 @@ def main(
         params_mapping[str(seed)] = json.dumps([prots0, params])
 
     # Store in database
-    clear_before_storing = input("Clear database before storing? [y/N] ").lower() == "y"
+    clear_before_storing = (
+        input("Delete parameter table in database before storing? [y/N] ").lower()
+        == "y"
+    )
     if clear_before_storing:
-        print("Clearing database...")
+        print("Deleting parameter table...")
         _ = database.delete(table_name)
     else:
         print("Not clearing database.")
@@ -53,15 +55,18 @@ def main(
 
 if __name__ == "__main__":
     param_sets_csv = Path(
-        "~/git/circuitree-paper/data/oscillation/param_sets_queue_10000.csv"
-        # "~/git/circuitree-paper/data/oscillation/param_sets_queue_10000_5tf.csv"
+        # "~/git/circuitree-paper/data/oscillation/param_sets_queue_10000.csv"
+        "~/git/circuitree-paper/data/oscillation/param_sets_queue_10000_5tf.csv"
     ).expanduser()
-    database_url = "redis://localhost:6379/0"
+
+    from oscillation_app import app
+
+    database_url = app.conf["broker_url"]
 
     main(
         param_sets_csv=param_sets_csv,
         database_url=database_url,
-        n_init_columns=3,
+        n_init_columns=5,
         n_parameters=10,
         seed_column="sample_num",
     )
