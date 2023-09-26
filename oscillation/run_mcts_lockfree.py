@@ -119,9 +119,7 @@ if __name__ == "__main__":
     backup_dir = save_dir.joinpath("backups")
     backup_dir.mkdir()
 
-    log_file = Path(
-        f"~/git/circuitree-paper/logs/oscillation/mcts/{now}/main.log"
-    ).expanduser()
+    log_file = Path(f"~/git/circuitree-paper/logs/worker-logs/main.log").expanduser()
     log_file.parent.mkdir()
     logging.basicConfig(
         filename=str(log_file),

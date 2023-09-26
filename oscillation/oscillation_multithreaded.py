@@ -234,9 +234,8 @@ def progress_and_backup_in_thread(
             tz_offset=tz_offset,
             **(db_kwargs or {}),
         )
-        mtree.logger.info(f"Database backup complete.")
 
-        if backup_visits and iteration:
+        if backup_visits and iteration > 0:
             last_backed_up = mtree.last_backed_up_iteration
             mtree.logger.info(
                 f"Backing up states visited at steps "
@@ -258,4 +257,5 @@ def progress_and_backup_in_thread(
 
         # Release all threads
         mtree.last_backed_up_iteration = overall_iteration
+        mtree.logger.info("Done. Releasing all threads.")
         mtree.backup_not_in_progress.set()
