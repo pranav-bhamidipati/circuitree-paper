@@ -9,7 +9,7 @@ import gevent
 from oscillation_multithreaded import (
     MultithreadedOscillationTree,
     progress_and_backup_in_thread,
-    progress_callback_in_main,
+    progress_callback_in_thread,
 )
 
 
