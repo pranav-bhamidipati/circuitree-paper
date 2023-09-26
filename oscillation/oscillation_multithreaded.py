@@ -1,8 +1,8 @@
-from time import perf_counter
 from gevent import monkey
 
 monkey.patch_all()
 
+from time import perf_counter
 from collections import Counter
 from gevent import Greenlet, getcurrent
 from gevent.event import Event
