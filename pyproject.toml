@@ -31,6 +31,7 @@ eventlet = { git = "https://github.com/eventlet/eventlet.git", rev = "caf9f9983a
 redis = { extras = ["hiredis"], version = "^5.0.0" }
 circuitree = { git = "https://github.com/pranav-bhamidipati/circuitree.git", rev = "main" }
 gevent = "^23.9.1"
+pygraphviz = "^1.11"
 
 [tool.poetry.group.dev.dependencies]
 black = "^23.7.0"
