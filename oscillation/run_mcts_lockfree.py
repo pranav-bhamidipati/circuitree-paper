@@ -9,7 +9,7 @@ import gevent
 from oscillation_multithreaded import (
     MultithreadedOscillationTree,
     progress_and_backup_in_thread,
-    progress_callback_in_main,
+    progress_callback_in_thread,
 )
 
 
@@ -53,12 +53,21 @@ def main(
     json_file = save_dir / f"{now}_tree.json"
 
     if run_in_main_thread:
+        callback = partial(
+            progress_and_backup_in_thread,
+            db_backup_dir=backup_dir,
+            backup_every=1,
+            gml_file=gml_file,
+            json_file=json_file,
+            keep_single_gml_backup=True,
+            backup_visits=True,
+        )
         run_search = partial(
             search_mcts_in_thread,
             mtree=mtree,
             n_steps=n_steps_per_thread,
-            callback=progress_callback_in_main,
-            callback_every=callback_every,
+            callback=callback,
+            callback_every=1,
             return_metrics=False,
         )
         start_msg = "Running search in main thread...\n"
@@ -119,30 +128,30 @@ if __name__ == "__main__":
     backup_dir = save_dir.joinpath("backups")
     backup_dir.mkdir()
 
-    log_file = Path(
-        f"~/git/circuitree-paper/logs/oscillation/mcts/{now}/main.log"
-    ).expanduser()
-    log_file.parent.mkdir()
+    log_file = Path(f"~/git/circuitree-paper/logs/worker-logs/main.log").expanduser()
+    log_file.parent.mkdir(exist_ok=True)
     logging.basicConfig(
         filename=str(log_file),
         filemode="a",
         format="%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s",
         datefmt="%H:%M:%S",
         level=logging.INFO,
+        # level=logging.DEBUG,
     )
     logger = logging.getLogger(__name__)
-    logger.info("Running main()")
+    logger.info("Running main() program.")
 
     main(
         save_dir=save_dir,
         backup_dir=backup_dir,
-        backup_every=5_000,
+        backup_every=3600,
         # threads=0,
         # threads=30,
         threads=300,
         n_steps_per_thread=5_000,
         max_interactions=12,
         logger=logger,
-        callback_every=10,
+        # callback_every=10,
+        callback_every=20,
         now=now,
     )

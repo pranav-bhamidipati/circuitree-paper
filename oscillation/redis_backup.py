@@ -1,5 +1,6 @@
-### Convert redis data to parquet-formatted DataFrame and save to disk
-### This script is intended to be run on a regular basis to backup the redis data
+from gevent import monkey
+
+monkey.patch_all()
 
 import datetime
 import json
@@ -62,11 +63,10 @@ def main(
         )
         data.append(state_data)
 
-        if print_progress:
-            if i >= next_print_point:
-                print(f"{next_print_idx * 10}% complete.")
-                next_print_idx += 1
-                next_print_point = print_points[next_print_idx]
+        if print_progress and i >= next_print_point:
+            print(f"{next_print_idx * 10}% complete.")
+            next_print_idx += 1
+            next_print_point = print_points[next_print_idx]
 
     df = pd.concat(data).sort_values(["state", "visit"])
     df["state"] = df["state"].astype("category")
@@ -83,7 +83,7 @@ def main(
         .absolute()
     )
     print(f"Saving backup to: {filepath}")
-    df.to_parquet(filepath, index=False)
+    df.to_parquet(filepath, index=False, engine="pyarrow")
     print("Database backup complete.")
 
 

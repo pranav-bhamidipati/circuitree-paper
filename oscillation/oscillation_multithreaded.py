@@ -3,12 +3,10 @@ from gevent import monkey
 monkey.patch_all()
 
 from time import perf_counter
-from collections import Counter
-from gevent import Greenlet, getcurrent
+from gevent import getcurrent
 from gevent.event import Event
 from gevent.queue import Queue
-from greenlet import greenlet
-from threading import current_thread
+from itertools import count
 from celery.result import AsyncResult
 from pathlib import Path
 import redis
@@ -16,11 +14,33 @@ from typing import Optional
 import datetime
 from uuid import uuid4
 
-from circuitree.parallel import MultithreadedCircuiTree, search_mcts_in_thread
+from circuitree.parallel import MultithreadedCircuiTree
 from oscillation import OscillationGrammar
 from redis_backup import main as backup_database
 
 from oscillation_app import database, app, task_logger, run_ssa_no_time_limit
+
+
+class AtomicCounter:
+    """Increments a counter atomically. Uses itertools.count(), which
+    is implemented in C as an atomic operation.
+
+    **REQUIRES CYPTHON**
+
+    From StackOverflow user `PhilMarsh`:
+        https://stackoverflow.com/a/71565358
+
+    """
+
+    def __init__(self):
+        self._incs = count()
+        self._accesses = count()
+
+    def increment(self):
+        next(self._incs)
+
+    def value(self):
+        return next(self._incs) - next(self._accesses)
 
 
 class MultithreadedOscillationTree(OscillationGrammar, MultithreadedCircuiTree):
@@ -53,7 +73,7 @@ class MultithreadedOscillationTree(OscillationGrammar, MultithreadedCircuiTree):
         self.backup_not_in_progress.set()
         self.last_backed_up_iteration: int = 0
         self.next_backup_time: datetime.datetime = datetime.datetime.now()
-        self.current_iteration = Counter()
+        self.global_iteration = AtomicCounter()
 
         self.queue_size = queue_size or 0
         self.result_history = Queue(maxsize=self.queue_size)
@@ -80,7 +100,7 @@ class MultithreadedOscillationTree(OscillationGrammar, MultithreadedCircuiTree):
                 "backup_not_in_progress",
                 "last_backed_up_iteration",
                 "next_backup_time",
-                "current_iteration",
+                "global_iteration",
                 "result_history",
             ]
         )
@@ -108,35 +128,31 @@ class MultithreadedOscillationTree(OscillationGrammar, MultithreadedCircuiTree):
             args=(state, int(seed)), kwargs=self.sim_kwargs, **kwargs
         )
 
-        # If there's a backup in progress, block until it's complete. Simulations are
-        # performed in the meantime!
+        # Don't update iteration counter until a running backup is complete
         self.backup_not_in_progress.wait()
-        self.current_iteration[getcurrent().minimal_ident] += 1
+        self.global_iteration.increment()
 
+        # Wait for the simulation to complete
         autocorr_min = task.get()
         reward = float(-autocorr_min > self.autocorr_threshold)
+
+        # Don't backpropagate until a running backup is complete. Most thread-time is
+        # spent in the get() call above, so simulations will stlll be running in the
+        # background during the backup.
+        self.backup_not_in_progress.wait()
         self.logger.info(
             f"Autocorr. min. of {autocorr_min:.4f} for visit {visit_number} "
             f"to state {state}. Oscillating? {bool(reward)}."
         )
-        self.backup_not_in_progress.wait()
         self.result_history.put((state, reward))
         return reward
-
-
-def progress_callback_in_main(
-    mtree: MultithreadedOscillationTree, iteration: int, *args, **kwargs
-):
-    """Callback function to report progress of MCTS search."""
-    _progress_msg = f"{iteration} iterations completed."
-    mtree.logger.info(_progress_msg)
 
 
 def progress_callback_in_thread(
     mtree: MultithreadedOscillationTree, iteration: int, *args, **kwargs
 ):
     """Callback function to report progress of MCTS search."""
-    thread_id = getcurrent().minimal_ident
+    thread_id = getattr(getcurrent(), "minimal_ident", "__main__")
     _progress_msg = f"{iteration} iterations complete for thread {thread_id}"
     mtree.logger.info(_progress_msg)
 
@@ -154,15 +170,15 @@ def progress_and_backup_in_thread(
     db_keyset: str = "transposition_table_keys",
     db_backup_prefix: str = "mcts_5tf_",
     db_kwargs: dict = None,
-    backup_visits: bool = True,
+    backup_results: bool = True,
     **kwargs,
 ):
     """Callback function to report progress of MCTS search and save the tree to disk."""
-    thread_id = getcurrent().minimal_ident
-    overall_iteration = sum(mtree.current_iteration)
+    thread_id = getattr(getcurrent(), "minimal_ident", "__main__")
     if iteration > 0:
         mtree.logger.info(
-            f"Iterations complete: {overall_iteration} ({iteration} in thread {thread_id}))"
+            f"Iterations complete: {mtree.global_iteration.value()} "
+            f"({iteration} in thread {thread_id}))"
         )
 
     # Backup the tree if enough time has elapsed
@@ -171,7 +187,6 @@ def progress_and_backup_in_thread(
         if mtree.backup_not_in_progress.is_set():
             # First thread to reach this point will perform the backup
             mtree.backup_not_in_progress.clear()
-            mtree.next_backup_time = now + datetime.timedelta(seconds=backup_every)
         else:
             # Other threads remain blocked until the backup is complete.
             if iteration == 0:
@@ -185,8 +200,9 @@ def progress_and_backup_in_thread(
             datetime.timezone(datetime.timedelta(hours=tz_offset))
         ).strftime(date_time_fmt)
 
+        global_iter = mtree.global_iteration.value()
         mtree.logger.info(
-            f"Backup triggered in thread {thread_id} at overall iteration {overall_iteration}."
+            f"Backup triggered in thread {thread_id} at global iteration {global_iter}."
         )
 
         # Tree attributes (metadata) are only saved once
@@ -199,11 +215,12 @@ def progress_and_backup_in_thread(
             json_file = None
 
         if gml_file is not None:
-            if gml_file.exists():
+            # Wildcard catches any compression file extensions (like .gml.gz)
+            if any(gml_file.parent.glob(f"{gml_file.name}*")):
                 mtree.logger.info(f"Backup file already exists. Overwriting...")
         else:
             gml_file = Path(mtree.save_dir) / f"tree-{mtree.tree_id}_{now_fmt}.gml"
-            existing_gmls = list(gml_file.parent.glob(f"*{mtree.tree_id}*.gml"))
+            existing_gmls = list(gml_file.parent.glob(f"*{mtree.tree_id}*.gml*"))
             if existing_gmls and keep_single_gml_backup:
                 mtree.logger.info(
                     f"Some backup file(s) already exist and will be deleted:",
@@ -218,12 +235,15 @@ def progress_and_backup_in_thread(
         if json_file is not None:
             mtree.logger.info(f"Backing up tree metadata to file: {json_file}")
 
-        start = perf_counter()
+        tree_start = perf_counter()
         mtree.to_file(gml_file, json_file, compress=True)
-        end = perf_counter()
-        mtree.logger.info(f"Tree backup completed in {end-start:.4f} seconds.")
+        tree_end = perf_counter()
+        mtree.logger.info(
+            f"Tree backup completed in {tree_end-tree_start:.4f} seconds."
+        )
         mtree.logger.info(f"Backing up transposition table database...")
         database_info = mtree.database.connection_pool.connection_kwargs
+        db_start = perf_counter()
         backup_database(
             keyset=db_keyset,
             host=database_info["host"],
@@ -232,30 +252,42 @@ def progress_and_backup_in_thread(
             save_dir=db_backup_dir,
             prefix=db_backup_prefix,
             tz_offset=tz_offset,
+            progress_bar=False,
+            print_progress=True,
             **(db_kwargs or {}),
         )
-        mtree.logger.info(f"Database backup complete.")
+        db_end = perf_counter()
+        mtree.logger.info(
+            f"Database backup completed in {db_end-db_start:.4f} seconds."
+        )
 
-        if backup_visits and iteration:
+        if backup_results and iteration > 0:
             last_backed_up = mtree.last_backed_up_iteration
+            results_file = Path(mtree.save_dir).joinpath(
+                f"results_steps{last_backed_up+1}-{global_iter}"
+                f"_{mtree.tree_id}_{now_fmt}.txt"
+            )
             mtree.logger.info(
                 f"Backing up states visited at steps "
-                f"{last_backed_up+1}-{overall_iteration}..."
-            )
-            visit_results_file = Path(mtree.save_dir).joinpath(
-                f"results_steps{last_backed_up+1}-{overall_iteration}"
-                f"_{mtree.tree_id}_{now_fmt}.txt"
+                f"{last_backed_up+1}-{global_iter} to file: {results_file}"
             )
 
             # gevent Queue object can be called as an iterator, calling get() repeatedly.
             # This clears the queue. Note that StopIteration is required, otherwise the
             # iterator won't terminate and get() will block indefinitely.
+            result_start = perf_counter()
             mtree.result_history.put(StopIteration)
             visit_results = [
-                ",".join(state, str(reward)) for state, reward in mtree.result_history
+                ",".join([state, str(reward)]) for state, reward in mtree.result_history
             ]
-            visit_results_file.write_text("\n".join(visit_results))
+            results_file.write_text("\n".join(visit_results))
+            result_end = perf_counter()
+            mtree.logger.info(
+                f"Results backup completed in {result_end-result_start:.4f} seconds."
+            )
 
         # Release all threads
-        mtree.last_backed_up_iteration = overall_iteration
+        mtree.logger.info("Done. Releasing all threads.")
+        mtree.last_backed_up_iteration = global_iter
+        mtree.next_backup_time = now + datetime.timedelta(seconds=backup_every)
         mtree.backup_not_in_progress.set()
