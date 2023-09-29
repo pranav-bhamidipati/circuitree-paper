@@ -6,26 +6,26 @@ import matplotlib.pyplot as plt
 import numpy as np
 from pathlib import Path
 
-from oscillation import (
+from oscillation import OscillationGrammar
+from tf_network import (
     autocorrelate,
     compute_lowest_minimum,
     binomial9_kernel,
-    OscillationTree,
 )
 
 
-otree = OscillationTree(
-    components=["A", "B", "C"], interactions=["activates", "inhibits"], root="ABC::"
+grammar = OscillationGrammar(
+    components=["A", "B", "C"], interactions=["activates", "inhibits"]
 )
 
 
-def has_motif(state, motif):
+def has_motif(state: str, motif: str):
     interaction_code = state.split("::")[1]
     if not interaction_code:
         return False
     state_interactions = set(interaction_code.split("_"))
 
-    for recoloring in otree.get_interaction_recolorings(motif):
+    for recoloring in grammar.get_interaction_recolorings(motif):
         motif_interactions = set(recoloring.split("_"))
         if motif_interactions.issubset(state_interactions):
             return True
@@ -55,7 +55,9 @@ def plot_network_quantity_and_acorr(
 
     fig1, ax = plt.subplots(1, 1, figsize=(figsize[0] * 0.6, figsize[1] * 0.6))
     plt.sca(ax)
-    plot_network(*otree.parse_genotype(genotype, nonterminal_ok=True), ax=ax, **kwargs)
+    plot_network(
+        *grammar.parse_genotype(genotype, nonterminal_ok=True), ax=ax, **kwargs
+    )
     if save:
         today = date.today().strftime("%y%m%d")
         fname = f"{today}_network_diagram{suffix}.{fmt}"
@@ -94,7 +96,7 @@ def plot_network_quantity_and_acorr(
     corr_time_mins = corr_time / 60.0
     # ax3.scatter(corr_time_mins, minimum_val, marker="x", s=50, c="r", zorder=100)
     ax2.annotate(
-        rf"$A_{{min}}={{{minimum_val:.2f}}}$",
+        rf"$\mathrm{{ACF}}_\mathrm{{min}}={{{minimum_val:.2f}}}$",
         (corr_time_mins, minimum_val),
         (corr_time_mins + 0.1 * t_mins.max(), -1.3),
         arrowprops=dict(arrowstyle="->"),
@@ -199,7 +201,8 @@ if __name__ == "__main__":
         genotype="ABC::AAa_ABa_BAi_CBi",
         data_fpath=data_fpath,
         plot_dir=plot_dir,
-        save=True,
         which_plot=0,
         network_kwargs=network_kwargs,
+        save=True,
+        fmt="eps",
     )
