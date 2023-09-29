@@ -90,7 +90,7 @@ class OscillationGrammar(SimpleNetworkGrammar):
         return visits > 0 and payout / visits > self.success_threshold
 
 
-class OscillationTree(CircuiTree, OscillationGrammar):
+class OscillationTree(OscillationGrammar, CircuiTree):
     def __init__(
         self,
         time_points: Optional[np.ndarray[np.float64]] = None,
