@@ -7,6 +7,7 @@ from networkx.drawing.nx_agraph import graphviz_layout
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 
 from oscillation import OscillationTree
 
@@ -21,14 +22,19 @@ _network_kwargs = dict(
 
 
 def main(
+    search_results_csv: Path,
     figsize: tuple = (2.0, 2.0),
     save: bool = False,
     save_dir: Optional[Path] = None,
-    fmt: str = "svg",
+    replicate: Optional[int] = None,
+    seed: int = 2023,
+    step: int = 50_000,
+    fmt: str = "png",
     dpi: int = 300,
     tree_kwargs: dict = {},
     aspect: float = 1.0,
     scale: float = 8.0,
+    best_osc_scale: float = 1.5,
     **kwargs,
 ):
     # Plotting parameters
@@ -85,6 +91,8 @@ def main(
     #     width=3,
     # )
 
+    print("Plotting the circuit design tree...")
+
     for g, (x, y) in pos.items():
         plot_network(
             *tree.parse_genotype(g, nonterminal_ok=True),
@@ -103,6 +111,8 @@ def main(
         plt.savefig(fpath, dpi=dpi)
     plt.close()
 
+    print("Plotting the circuit simulated during the simulation step...")
+
     fig1a_sim_node = plt.figure(figsize=(1.0, 1.0))
     sim_node = f"{repressilator}_BBa_CCi"
     plot_network(
@@ -119,10 +129,49 @@ def main(
         plt.savefig(fpath, dpi=dpi)
     plt.close()
 
+    # Read in data frame of the best oscillator over search iterationsa
+    df = pd.read_csv(search_results_csv)
+    replicates = df["replicate"].unique()
+    steps = df["step"].unique()
+    if step not in steps:
+        raise ValueError(f"step {step} not in data: {steps}")
+    if replicate is None:
+        rg = np.random.default_rng(seed)
+        replicate = rg.choice(replicates)
+
+    best_row = df.loc[(df.replicate == replicate) & (df.step == step)]
+    best_oscillator = best_row["best_oscillator"].item()
+    best_Q = best_row["best_Q"].item()
+    true_Q = best_row["true_Q"].item()
+
+    print(f"Plotting the best oscillator: {best_oscillator}")
+    print(f"Sampled probability of oscillation: {best_Q:.4f}")
+    print(f"True probability of oscillation: {true_Q:.4f}")
+
+    fig1a_best = plt.figure(figsize=(best_osc_scale, best_osc_scale))
+    plot_network(
+        *tree.parse_genotype(best_oscillator, nonterminal_ok=True),
+        plot_labels=False,
+        **network_kwargs,
+    )
+
+    if save:
+        fname = f"{today}_fig1_best_oscillator.{fmt}"
+        fpath = Path(save_dir).joinpath(fname).resolve().absolute()
+        print(f"Writing to: {fpath}")
+        plt.savefig(fpath, dpi=dpi)
+
 
 if __name__ == "__main__":
     save_dir = Path("figures/oscillation")
+    data_dir = Path(
+        "data/oscillation/mcts/bootstrap_short_230928_000000/230929_best_oscillators_3tf_short.csv"
+    )
     main(
         save=True,
         save_dir=save_dir,
+        search_results_csv=data_dir,
+        replicate=1,
+        step=50_000,
+        fmt="eps",
     )

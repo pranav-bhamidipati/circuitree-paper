@@ -1,6 +1,5 @@
 from functools import partial
-import logging
-from multiprocessing import Pool, active_children, current_process
+from multiprocessing import Pool, current_process
 from pathlib import Path
 from numba import njit
 import numpy as np
@@ -104,7 +103,7 @@ class SequentialSampler:
         oscillator_data = self.oscillators_to_dataframe()
         iteration = self.iteration
         target_csv = self.save_dir.joinpath(
-            f"oscillation_sequential_bootstrap_{iteration}.csv"
+            f"sequential_bootstrap_{iteration}_oscillators.csv"
         )
         oscillator_data.to_csv(target_csv)
 
@@ -125,7 +124,8 @@ def do_one_search(
     sampler = SequentialSampler(
         Q_table=oscillator_table, rg=rg, save_dir=save_dir, Q_threshold=Q_threshold
     )
-    print("Starting search in process:", current_process().pid)
+    pid = current_process().pid
+    print("Starting search in process:", pid)
     sampler.run_search(n_steps, save_every, print_every=print_every)
 
 
@@ -142,6 +142,7 @@ def main(
 ):
     n_workers = min(n_replicates, n_workers or cpu_count())
     print(f"Running {n_replicates} searches in parallel with {n_workers} workers")
+    print(f"Saving results to {save_dir}")
 
     kw = dict(
         n_steps=n_steps,
@@ -165,6 +166,7 @@ def main(
         with Pool(n_workers) as pool:
             do_job_in_process = partial(do_one_search, **kw)
             pool.map(do_job_in_process, search_args)
+            print(f"Finished running searches and saving results to {save_dir}")
             print("Done! Closing pool")
 
 
@@ -175,20 +177,20 @@ if __name__ == "__main__":
 
     oscillation_table_csv = Path("data/oscillation/230717_motifs.csv")
 
-    save_dir = Path(f"data/oscillation/mcts/sequential_long_{now}")
+    save_dir = Path(f"data/oscillation/mcts/sequential_short_{now}")
     # save_dir = Path(f"data/oscillation/mcts/sequential_long_{now}")
     save_dir.mkdir(exist_ok=True)
 
     main(
         save_dir=save_dir,
         oscillator_table_csv=oscillation_table_csv,
-        n_workers=1,
-        n_replicates=12,
+        n_workers=12,
+        n_replicates=50,
         parent_seed=2023,
-        # n_steps=100_000,
-        # print_every=10_000,
-        # save_every=10_000,
-        n_steps=34_110_000,
-        save_every=100_000,
-        print_every=34_110_000,
+        n_steps=100_000,
+        print_every=10_000,
+        save_every=1_000,
+        # n_steps=34_110_000,
+        # save_every=100_000,
+        # print_every=34_110_000,
     )
