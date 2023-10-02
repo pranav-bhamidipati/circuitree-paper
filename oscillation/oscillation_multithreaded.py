@@ -21,6 +21,27 @@ from redis_backup import main as backup_database
 from oscillation_app import database, app, task_logger, run_ssa_no_time_limit
 
 
+class BackupContextManager:
+    def __init__(self, backup_not_in_progress: Event):
+        self._backup_not_in_progress = backup_not_in_progress
+
+    def __enter__(self):
+        self._backup_not_in_progress.clear()
+
+    def __exit__(self, *args):
+        self._backup_not_in_progress.set()
+
+
+class ManagedEvent(Event):
+    """Event object that also provides a context manager."""
+
+    def backup_context(self):
+        """During a backup, the context manager will clear the event, blocking all
+        threads until the backup is complete. Then the event is set again and
+        threads are released."""
+        return BackupContextManager(self)
+
+
 class AtomicCounter:
     """Increments a counter atomically. Uses itertools.count(), which
     is implemented in C as an atomic operation.
@@ -69,7 +90,7 @@ class MultithreadedOscillationTree(OscillationGrammar, MultithreadedCircuiTree):
         self.success_threshold = success_threshold
 
         self.tree_id = str(uuid4())
-        self.backup_not_in_progress = Event()
+        self.backup_not_in_progress = ManagedEvent()
         self.backup_not_in_progress.set()
         self.last_backed_up_iteration: int = 0
         self.next_backup_time: datetime.datetime = datetime.datetime.now()
@@ -183,98 +204,122 @@ def progress_and_backup_in_thread(
     # Backup the tree if enough time has elapsed
     now = datetime.datetime.now()
     if mtree.next_backup_time < now or force_backup:
-        if mtree.backup_not_in_progress.is_set():
-            # First thread to reach this point will perform the backup
-            mtree.backup_not_in_progress.clear()
-        else:
-            # Other threads remain blocked until the backup is complete.
+        if not mtree.backup_not_in_progress.is_set():
+            # During a backup, non-backup threads block until the backup is complete.
             if iteration == 0:
-                # Ensure no search iterations are performed until the initial backup is complete.
+                # No search iterations are performed before the initial backup.
                 # After this, threads are blocked during the get_reward() call.
                 mtree.backup_not_in_progress.wait()
             return
 
-        date_time_fmt = "%Y-%m-%d_%H-%M-%S"
-        now_fmt = datetime.datetime.now(
-            datetime.timezone(datetime.timedelta(hours=tz_offset))
-        ).strftime(date_time_fmt)
-
-        global_iter = mtree.global_iteration.value()
-        mtree.logger.info(
-            f"Backup triggered in thread {thread_id} at global iteration {global_iter}."
-        )
-
-        gml_file = Path(backup_dir) / f"tree-{mtree.tree_id}_{now_fmt}.gml"
-        existing_gmls = sorted(gml_file.parent.glob(f"*{mtree.tree_id}*.gml*"))
-        # Delete old backups
-        for f in existing_gmls[:-n_tree_backups]:
-            mtree.logger.info(f"Deleting old backup file: {f}")
-            f.unlink()
-
-        # Tree attributes (metadata) are only saved once
-        if iteration == 0:
-            json_file = Path(backup_dir) / f"tree-{mtree.tree_id}_{now_fmt}.json"
-            mtree.logger.info(f"Backing up tree metadata to file: {json_file}")
-
-        gml_compressed = gml_file.with_suffix(".gml.gz")
-        mtree.logger.info(f"Backing up tree graph to file: {gml_compressed}")
-
-        tree_start = perf_counter()
-        mtree.to_file(gml_file, json_file, compress=True)
-        tree_end = perf_counter()
-
-        mtree.logger.info(
-            f"Graph backup completed in {tree_end-tree_start:.4f} seconds."
-        )
-
-        mtree.logger.info(f"Backing up transposition table database...")
-        database_info = mtree.database.connection_pool.connection_kwargs
-        db_start = perf_counter()
-        backup_database(
-            keyset=db_keyset,
-            host=database_info["host"],
-            port=database_info["port"],
-            db=database_info["db"],
-            save_dir=backup_dir,
-            prefix=db_backup_prefix,
-            tz_offset=tz_offset,
-            progress_bar=False,
-            print_progress=True,
-            logger=mtree.logger,
-            **(db_kwargs or {}),
-        )
-        db_end = perf_counter()
-        mtree.logger.info(
-            f"Database backup completed in {db_end-db_start:.4f} seconds."
-        )
-
-        if backup_results and iteration != 0:
-            last_backed_up = mtree.last_backed_up_iteration
-            results_file = Path(mtree.save_dir).joinpath(
-                f"results_steps{last_backed_up+1}-{global_iter}"
-                f"_{mtree.tree_id}_{now_fmt}.txt"
-            )
+        # First thread to reach this point will perform the backup
+        with mtree.backup_not_in_progress.backup_context():
+            global_iter = mtree.global_iteration.value()
             mtree.logger.info(
-                f"Backing up states visited at steps "
-                f"{last_backed_up+1}-{global_iter} to file: {results_file}"
+                f"Backup triggered in thread {thread_id} at global iteration {global_iter}."
+            )
+            save_metadata = iteration == 0
+            backup_results = backup_results and iteration != 0
+            _backup_in_thread(
+                mtree=mtree,
+                global_iter=global_iter,
+                backup_dir=backup_dir,
+                backup_every=backup_every,
+                tz_offset=tz_offset,
+                n_tree_backups=n_tree_backups,
+                db_keyset=db_keyset,
+                db_backup_prefix=db_backup_prefix,
+                db_kwargs=db_kwargs,
+                backup_results=backup_results,
+                save_metadata=save_metadata,
             )
 
-            # gevent Queue object can be called as an iterator, calling get() repeatedly.
-            # This clears the queue. Note that StopIteration is required, otherwise the
-            # iterator won't terminate and get() will block indefinitely.
-            result_start = perf_counter()
-            mtree.result_history.put(StopIteration)
-            visit_results = [
-                ",".join([state, str(reward)]) for state, reward in mtree.result_history
-            ]
-            results_file.write_text("\n".join(visit_results))
-            result_end = perf_counter()
-            mtree.logger.info(
-                f"Results backup completed in {result_end-result_start:.4f} seconds."
-            )
 
-        # Release all threads
-        mtree.logger.info("Done. Releasing all threads.")
-        mtree.last_backed_up_iteration = global_iter
-        mtree.next_backup_time = now + datetime.timedelta(seconds=backup_every)
-        mtree.backup_not_in_progress.set()
+def _backup_in_thread(
+    mtree: MultithreadedOscillationTree,
+    global_iter: int,
+    backup_dir: str | Path,
+    backup_every: int,
+    tz_offset: int,
+    n_tree_backups: int,
+    db_keyset: str,
+    db_backup_prefix: str,
+    db_kwargs: dict,
+    backup_results: bool,
+    save_metadata: bool,
+):
+    date_time_fmt = "%Y-%m-%d_%H-%M-%S"
+    now = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=tz_offset)))
+    now_fmt = now.strftime(date_time_fmt)
+
+    gml_file = Path(backup_dir) / f"tree-{mtree.tree_id}_{now_fmt}.gml"
+    existing_gmls = sorted(gml_file.parent.glob(f"*{mtree.tree_id}*.gml*"))
+    # Delete old backups
+    for f in existing_gmls[:-n_tree_backups]:
+        mtree.logger.info(f"Deleting old backup file: {f}")
+        f.unlink()
+
+    # Tree attributes (metadata) are only saved once
+    if save_metadata:
+        json_file = Path(backup_dir) / f"tree-{mtree.tree_id}_{now_fmt}.json"
+        mtree.logger.info(f"Backing up tree metadata to file: {json_file}")
+    else:
+        json_file = None
+
+    gml_compressed = gml_file.with_suffix(".gml.gz")
+    mtree.logger.info(f"Backing up tree graph to file: {gml_compressed}")
+
+    tree_start = perf_counter()
+    mtree.to_file(gml_file, json_file, compress=True)
+    tree_end = perf_counter()
+
+    mtree.logger.info(f"Graph backup completed in {tree_end-tree_start:.4f} seconds.")
+
+    mtree.logger.info(f"Backing up transposition table database...")
+    database_info = mtree.database.connection_pool.connection_kwargs
+    db_start = perf_counter()
+    backup_database(
+        keyset=db_keyset,
+        host=database_info["host"],
+        port=database_info["port"],
+        db=database_info["db"],
+        save_dir=backup_dir,
+        prefix=db_backup_prefix,
+        tz_offset=tz_offset,
+        progress_bar=False,
+        print_progress=True,
+        logger=mtree.logger,
+        **(db_kwargs or {}),
+    )
+    db_end = perf_counter()
+    mtree.logger.info(f"Database backup completed in {db_end-db_start:.4f} seconds.")
+
+    if backup_results:
+        last_backed_up = mtree.last_backed_up_iteration
+        results_file = Path(mtree.save_dir).joinpath(
+            f"results_steps{last_backed_up+1}-{global_iter}"
+            f"_{mtree.tree_id}_{now_fmt}.txt"
+        )
+        mtree.logger.info(
+            f"Backing up states visited at steps "
+            f"{last_backed_up+1}-{global_iter} to file: {results_file}"
+        )
+
+        # gevent Queue object can be called as an iterator, calling get() repeatedly.
+        # This clears the queue. Note that StopIteration is required, otherwise the
+        # iterator won't terminate and get() will block indefinitely.
+        result_start = perf_counter()
+        mtree.result_history.put(StopIteration)
+        visit_results = [
+            ",".join([state, str(reward)]) for state, reward in mtree.result_history
+        ]
+        results_file.write_text("\n".join(visit_results))
+        result_end = perf_counter()
+        mtree.logger.info(
+            f"Results backup completed in {result_end-result_start:.4f} seconds."
+        )
+
+    # Release all threads
+    mtree.logger.info("Done. Releasing all threads.")
+    mtree.last_backed_up_iteration = global_iter
+    mtree.next_backup_time = now + datetime.timedelta(seconds=backup_every)

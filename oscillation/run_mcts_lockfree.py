@@ -137,11 +137,10 @@ if __name__ == "__main__":
         backup_every=3600,
         # threads=0,
         # threads=30,
-        threads=300,
+        threads=500,
         n_steps_per_thread=5_000,
         max_interactions=12,
         logger=logger,
         # callback_every=10,
         callback_every=20,
-        datetime_str=now,
     )
