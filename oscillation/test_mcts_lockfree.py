@@ -8,20 +8,20 @@ import gevent
 
 from oscillation_multithreaded import (
     MultithreadedOscillationTree,
-    progress_and_backup_in_thread,
-    progress_callback_in_thread,
+    progress_and_backup_in_thread2,
 )
 
 
 def main(
     save_dir: Path,
     backup_dir: Optional[Path] = None,
-    threads: int = 16,
-    n_steps_per_thread: int = 10_000,
-    max_interactions: int = 12,
+    threads: int = 25,
+    n_steps_per_thread: int = 1_000,
+    max_interactions: int = 4,
     callback_every: int = 1,
-    backup_every: int = 3600,
+    backup_every: int = 25,
     n_tree_backups: int = 2,
+    now: str = None,
     logger=None,
 ):
     if threads == 0:
@@ -48,12 +48,19 @@ def main(
     print(f"Saving results to {save_dir}")
     print()
 
+    now = now or datetime.now().strftime("%y%m%d_%H%M%S")
+    # gml_file = save_dir / f"{now}_tree.gml"
+    # json_file = save_dir / f"{now}_tree.json"
+
     if run_in_main_thread:
         callback = partial(
-            progress_and_backup_in_thread,
+            progress_and_backup_in_thread2,
             backup_dir=backup_dir,
             backup_every=1,
-            n_tree_backups=n_tree_backups,
+            # gml_file=gml_file,
+            # json_file=json_file,
+            n_tree_backups_to_keep=n_tree_backups,
+            # keep_single_gml_backup=True,
             backup_results=True,
         )
         run_search = partial(
@@ -76,11 +83,15 @@ def main(
         mtree.logger.info(finish_msg)
 
     else:
+        gml_file = backup_dir / f"{now}_tree_backup.gml"
+        json_file = backup_dir / f"{now}_tree_metadata.json"
         callback = partial(
-            progress_and_backup_in_thread,
+            progress_and_backup_in_thread2,
             backup_dir=backup_dir,
             backup_every=backup_every,
-            n_tree_backups=n_tree_backups,
+            gml_file=gml_file,
+            json_file=json_file,
+            keep_single_gml_backup=True,
             backup_results=True,
         )
 
@@ -103,7 +114,7 @@ def main(
         )
         print(finish_msg)
         mtree.logger.info(finish_msg)
-        callback(mtree=mtree, iteration=-1, force_backup=True)
+        mtree.to_file(gml_file, json_file)
 
 
 if __name__ == "__main__":
@@ -112,13 +123,13 @@ if __name__ == "__main__":
 
     now = datetime.now().strftime("%y%m%d-%H-%M-%S")
     save_dir = Path(
-        f"~/git/circuitree-paper/data/oscillation/mcts/{now}_5tf_lockfree"
+        f"~/git/circuitree-paper/data/oscillation/mcts/{now}_5tf_lockfree_test_backups"
     ).expanduser()
     save_dir.mkdir()
     backup_dir = save_dir.joinpath("backups")
     backup_dir.mkdir()
 
-    log_file = Path(f"~/git/circuitree-paper/logs/worker-logs/main.log").expanduser()
+    log_file = Path(f"~/git/circuitree-paper/logs/worker-logs/test.log").expanduser()
     log_file.parent.mkdir(exist_ok=True)
     logging.basicConfig(
         filename=str(log_file),
@@ -134,14 +145,13 @@ if __name__ == "__main__":
     main(
         save_dir=save_dir,
         backup_dir=backup_dir,
-        backup_every=3600,
-        # threads=0,
-        # threads=30,
-        threads=300,
-        n_steps_per_thread=5_000,
-        max_interactions=12,
+        threads=0,
+        backup_every=1,
+        n_tree_backups=4,
+        # threads=25,
+        n_steps_per_thread=50,
+        max_interactions=4,
         logger=logger,
-        # callback_every=10,
-        callback_every=20,
-        datetime_str=now,
+        callback_every=1,
+        now=now,
     )

@@ -4,6 +4,7 @@ monkey.patch_all()
 
 import datetime
 import json
+import logging
 import numpy as np
 import pandas as pd
 from pathlib import Path
@@ -21,20 +22,23 @@ def main(
     progress_bar: bool = True,
     print_progress: bool = False,
     database_url: str | Path = None,
+    logger: logging.Logger = None,
     **kwargs,
 ):
+    stream_output = logger.info if logger is not None else print
+
     if print_progress and progress_bar:
         raise ValueError("print_progress and progress_bar cannot both be True.")
 
     # Connect to redis
     database_url = database_url or app.conf["broker_url"]
-    print(f"Connecting to redis at {database_url}")
+    stream_output(f"Connecting to redis at {database_url}")
     database = redis.Redis.from_url(database_url)
 
     # Collect all keys to back up
     keys_to_backup = database.smembers(keyset)
     if not keys_to_backup:
-        print(f"No keys found in keyset {keyset}. Backup aborted.")
+        stream_output(f"No keys found in keyset {keyset}. Backup aborted.")
         return
 
     # Convert redis data to parquet-formatted DataFrame
@@ -46,7 +50,7 @@ def main(
         next_print_idx = 1
         next_print_point = print_points[next_print_idx]
 
-    print(f"Backing up {len(keys_to_backup)} keys...")
+    stream_output(f"Backing up {len(keys_to_backup)} keys...")
     iterator = tqdm(keys_to_backup) if progress_bar else keys_to_backup
     for i, key in enumerate(iterator):
         visits, autocorr_mins, sim_times = zip(
@@ -64,7 +68,7 @@ def main(
         data.append(state_data)
 
         if print_progress and i >= next_print_point:
-            print(f"{next_print_idx * 10}% complete.")
+            stream_output(f"{next_print_idx * 10}% complete.")
             next_print_idx += 1
             next_print_point = print_points[next_print_idx]
 
@@ -82,9 +86,9 @@ def main(
         .resolve()
         .absolute()
     )
-    print(f"Saving backup to: {filepath}")
+    stream_output(f"Saving backup to: {filepath}")
     df.to_parquet(filepath, index=False, engine="pyarrow")
-    print("Database backup complete.")
+    stream_output("Database backup complete.")
 
 
 if __name__ == "__main__":

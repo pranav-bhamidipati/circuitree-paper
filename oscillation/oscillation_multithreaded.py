@@ -161,16 +161,15 @@ def progress_and_backup_in_thread(
     mtree: MultithreadedOscillationTree,
     iteration: int,
     *args,
-    db_backup_dir: str | Path,
+    backup_dir: str | Path,
     backup_every: int = 3600,
-    gml_file: Optional[str | Path] = None,
-    json_file: Optional[str | Path] = None,
     tz_offset: int = -7,
-    keep_single_gml_backup: bool = True,
+    n_tree_backups: int = 10,
     db_keyset: str = "transposition_table_keys",
     db_backup_prefix: str = "mcts_5tf_",
     db_kwargs: dict = None,
     backup_results: bool = True,
+    force_backup: bool = False,
     **kwargs,
 ):
     """Callback function to report progress of MCTS search and save the tree to disk."""
@@ -183,7 +182,7 @@ def progress_and_backup_in_thread(
 
     # Backup the tree if enough time has elapsed
     now = datetime.datetime.now()
-    if mtree.next_backup_time < now:
+    if mtree.next_backup_time < now or force_backup:
         if mtree.backup_not_in_progress.is_set():
             # First thread to reach this point will perform the backup
             mtree.backup_not_in_progress.clear()
@@ -205,42 +204,29 @@ def progress_and_backup_in_thread(
             f"Backup triggered in thread {thread_id} at global iteration {global_iter}."
         )
 
+        gml_file = Path(backup_dir) / f"tree-{mtree.tree_id}_{now_fmt}.gml"
+        existing_gmls = sorted(gml_file.parent.glob(f"*{mtree.tree_id}*.gml*"))
+        # Delete old backups
+        for f in existing_gmls[:-n_tree_backups]:
+            mtree.logger.info(f"Deleting old backup file: {f}")
+            f.unlink()
+
         # Tree attributes (metadata) are only saved once
         if iteration == 0:
-            json_file = (
-                json_file
-                or Path(mtree.save_dir) / f"tree_{mtree.tree_id}_{now_fmt}.json"
-            )
-        else:
-            json_file = None
-
-        if gml_file is not None:
-            # Wildcard catches any compression file extensions (like .gml.gz)
-            if any(gml_file.parent.glob(f"{gml_file.name}*")):
-                mtree.logger.info(f"Backup file already exists. Overwriting...")
-        else:
-            gml_file = Path(mtree.save_dir) / f"tree-{mtree.tree_id}_{now_fmt}.gml"
-            existing_gmls = list(gml_file.parent.glob(f"*{mtree.tree_id}*.gml*"))
-            if existing_gmls and keep_single_gml_backup:
-                mtree.logger.info(
-                    f"Some backup file(s) already exist and will be deleted:",
-                    *existing_gmls,
-                    sep="\n\t",
-                )
-                for f in existing_gmls:
-                    f.unlink()
-
-        mtree.logger.info(f"Backing up tree graph to file: {gml_file}")
-
-        if json_file is not None:
+            json_file = Path(backup_dir) / f"tree-{mtree.tree_id}_{now_fmt}.json"
             mtree.logger.info(f"Backing up tree metadata to file: {json_file}")
+
+        gml_compressed = gml_file.with_suffix(".gml.gz")
+        mtree.logger.info(f"Backing up tree graph to file: {gml_compressed}")
 
         tree_start = perf_counter()
         mtree.to_file(gml_file, json_file, compress=True)
         tree_end = perf_counter()
+
         mtree.logger.info(
-            f"Tree backup completed in {tree_end-tree_start:.4f} seconds."
+            f"Graph backup completed in {tree_end-tree_start:.4f} seconds."
         )
+
         mtree.logger.info(f"Backing up transposition table database...")
         database_info = mtree.database.connection_pool.connection_kwargs
         db_start = perf_counter()
@@ -249,11 +235,12 @@ def progress_and_backup_in_thread(
             host=database_info["host"],
             port=database_info["port"],
             db=database_info["db"],
-            save_dir=db_backup_dir,
+            save_dir=backup_dir,
             prefix=db_backup_prefix,
             tz_offset=tz_offset,
             progress_bar=False,
             print_progress=True,
+            logger=mtree.logger,
             **(db_kwargs or {}),
         )
         db_end = perf_counter()
@@ -261,7 +248,7 @@ def progress_and_backup_in_thread(
             f"Database backup completed in {db_end-db_start:.4f} seconds."
         )
 
-        if backup_results and iteration > 0:
+        if backup_results and iteration != 0:
             last_backed_up = mtree.last_backed_up_iteration
             results_file = Path(mtree.save_dir).joinpath(
                 f"results_steps{last_backed_up+1}-{global_iter}"
