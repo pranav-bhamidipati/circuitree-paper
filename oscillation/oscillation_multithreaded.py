@@ -77,6 +77,7 @@ class MultithreadedOscillationTree(ParallelNetworkTree):
         database: redis.Redis = database,
         queue_size: Optional[int] = None,
         logger=None,
+        tz_offset: int = -7,  # Pacific time
         **kwargs,
         # max_iter_per_timestep: int = 100_000_000,
     ):
@@ -92,8 +93,10 @@ class MultithreadedOscillationTree(ParallelNetworkTree):
         self.backup_not_in_progress = ManagedEvent()
         self.backup_not_in_progress.set()
         self.last_backed_up_iteration: int = 0
-        self.next_backup_time: datetime.datetime = datetime.datetime.now()
         self.global_iteration = AtomicCounter()
+
+        self.time_zone = datetime.timezone(datetime.timedelta(hours=tz_offset))
+        self.next_backup_time = datetime.datetime.now(self.time_zone)
 
         self.queue_size = queue_size or 0
         self.result_history = Queue(maxsize=self.queue_size)
@@ -118,8 +121,9 @@ class MultithreadedOscillationTree(ParallelNetworkTree):
                 "database",
                 "backup_not_in_progress",
                 "last_backed_up_iteration",
-                "next_backup_time",
                 "global_iteration",
+                "time_zone",
+                "next_backup_time",
                 "result_history",
             ]
         )
@@ -184,14 +188,13 @@ def progress_and_backup_in_thread(
     *args,
     backup_dir: str | Path,
     backup_every: int = 3600,
-    tz_offset: int = -7,
     n_tree_backups: int = 10,
     db_keyset: str = "transposition_table_keys",
     db_backup_prefix: str = "mcts_5tf_",
-    db_kwargs: dict = None,
     backup_results: bool = True,
     force_backup: bool = False,
-    **kwargs,
+    dry_run: bool = False,
+    **db_kwargs,
 ):
     """Callback function to report progress of MCTS search and save the tree to disk."""
     thread_id = getattr(getcurrent(), "minimal_ident", "__main__")
@@ -202,8 +205,12 @@ def progress_and_backup_in_thread(
         )
 
     # Backup the tree if enough time has elapsed
-    now = datetime.datetime.now()
-    if mtree.next_backup_time < now or force_backup:
+    now = datetime.datetime.now(mtree.time_zone)
+    try:
+        do_backup = mtree.next_backup_time < now
+    except TypeError:
+        ...
+    if do_backup or force_backup:
         if not mtree.backup_not_in_progress.is_set():
             # During a backup, non-backup threads block until the backup is complete.
             if iteration == 0:
@@ -225,13 +232,14 @@ def progress_and_backup_in_thread(
                 global_iter=global_iter,
                 backup_dir=backup_dir,
                 backup_every=backup_every,
-                tz_offset=tz_offset,
                 n_tree_backups=n_tree_backups,
                 db_keyset=db_keyset,
                 db_backup_prefix=db_backup_prefix,
                 db_kwargs=db_kwargs,
                 backup_results=backup_results,
                 save_metadata=save_metadata,
+                dry_run=dry_run,
+                **db_kwargs,
             )
 
 
@@ -240,16 +248,16 @@ def _backup_in_thread(
     global_iter: int,
     backup_dir: str | Path,
     backup_every: int,
-    tz_offset: int,
     n_tree_backups: int,
     db_keyset: str,
     db_backup_prefix: str,
-    db_kwargs: dict,
     backup_results: bool,
     save_metadata: bool,
+    dry_run: bool = False,
+    **db_kwargs,
 ):
     date_time_fmt = "%Y-%m-%d_%H-%M-%S"
-    now = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=tz_offset)))
+    now = datetime.datetime.now(mtree.time_zone)
     now_fmt = now.strftime(date_time_fmt)
 
     gml_file = Path(backup_dir) / f"tree-{mtree.tree_id}_{now_fmt}.gml"
@@ -285,11 +293,12 @@ def _backup_in_thread(
         db=database_info["db"],
         save_dir=backup_dir,
         prefix=db_backup_prefix,
-        tz_offset=tz_offset,
+        tz=mtree.time_zone,
         progress_bar=False,
         print_progress=True,
         logger=mtree.logger,
-        **(db_kwargs or {}),
+        dry_run=dry_run,
+        **db_kwargs,
     )
     db_end = perf_counter()
     mtree.logger.info(f"Database backup completed in {db_end-db_start:.4f} seconds.")

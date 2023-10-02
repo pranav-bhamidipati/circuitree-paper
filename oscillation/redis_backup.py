@@ -18,11 +18,12 @@ def main(
     keyset="transposition_table_keys",
     save_dir: str | Path = None,
     prefix="",
-    tz_offset=-7,  # Pacific Time
+    tz: datetime.timezone = None,
     progress_bar: bool = True,
     print_progress: bool = False,
     database_url: str | Path = None,
     logger: logging.Logger = None,
+    dry_run: bool = False,
     **kwargs,
 ):
     stream_output = logger.info if logger is not None else print
@@ -51,6 +52,11 @@ def main(
         next_print_point = print_points[next_print_idx]
 
     stream_output(f"Backing up {len(keys_to_backup)} keys...")
+
+    if dry_run:
+        stream_output("Option dry_run=True. Backup not performed.")
+        return
+
     iterator = tqdm(keys_to_backup) if progress_bar else keys_to_backup
     for i, key in enumerate(iterator):
         visits, autocorr_mins, sim_times = zip(
@@ -77,9 +83,8 @@ def main(
 
     # Save to disk
     date_time_fmt = "%Y-%m-%d_%H-%M-%S"
-    date_time_formatted = datetime.datetime.now(
-        datetime.timezone(datetime.timedelta(hours=tz_offset))
-    ).strftime(date_time_fmt)
+    tz = tz or datetime.timezone.utc
+    date_time_formatted = datetime.datetime.now(tz).strftime(date_time_fmt)
     save_dir = Path(save_dir) if save_dir else Path.cwd()
     filepath = (
         (save_dir / f"{prefix}backup_{date_time_formatted}.parquet")
