@@ -9,7 +9,6 @@ import gevent
 from oscillation_multithreaded import (
     MultithreadedOscillationTree,
     progress_and_backup_in_thread,
-    progress_callback_in_thread,
 )
 
 
@@ -23,6 +22,7 @@ def main(
     backup_every: int = 3600,
     n_tree_backups: int = 2,
     logger=None,
+    dry_run: bool = False,
 ):
     if threads == 0:
         run_in_main_thread = True
@@ -55,6 +55,7 @@ def main(
             backup_every=1,
             n_tree_backups=n_tree_backups,
             backup_results=True,
+            dry_run=dry_run,
         )
         run_search = partial(
             search_mcts_in_thread,
@@ -82,6 +83,7 @@ def main(
             backup_every=backup_every,
             n_tree_backups=n_tree_backups,
             backup_results=True,
+            dry_run=dry_run,
         )
 
         run_search = partial(
@@ -134,13 +136,17 @@ if __name__ == "__main__":
     main(
         save_dir=save_dir,
         backup_dir=backup_dir,
-        backup_every=3600,
+        # dry_run=True,
+        # backup_every=60,
+        # backup_every=3600,
+        backup_every=7200,
         # threads=0,
         # threads=30,
         threads=500,
-        n_steps_per_thread=5_000,
+        n_steps_per_thread=2_000,
         max_interactions=12,
         logger=logger,
+        # callback_every=1,
         # callback_every=10,
         callback_every=20,
     )
