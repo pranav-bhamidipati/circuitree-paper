@@ -78,6 +78,17 @@ SAMPLED_VAR_NAMES = [
     "gamma_p",
 ]
 
+SAMPLED_VAR_MATHTEXT = [
+    r"$\log_{10}{K_{D,1}}$",
+    r"${K_{D,2}}/{K_{D,1}}$",
+    r"$k_{m,\mathrm{unbound}}$",
+    r"$k_{m,\mathrm{act}}$",
+    r"$-\log_{10}{k_{m,\mathrm{rep}}/k_{m,\mathrm{unbound}}}$",
+    r"$k_p$",
+    r"$\gamma_m$",
+    r"$\gamma_p$",
+]
+
 MEAN_INITIAL_POPULATION = 10.0
 
 
