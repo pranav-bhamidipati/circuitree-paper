@@ -230,7 +230,9 @@ class TFNetworkModel:
 
         tdiff = t - t[0]
         if freqs:
-            minima_freqs = np.where(where_minima > 0, 1 / tdiff[where_minima], 0.0)
+            minima_freqs = np.where(
+                where_minima > 0, 1 / (2 * tdiff[where_minima]), 0.0
+            )
 
         squeeze = where_minima.size == 1
         if squeeze:
