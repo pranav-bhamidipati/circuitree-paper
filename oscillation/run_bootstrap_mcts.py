@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from psutil import cpu_count
-from typing import Optional
+from typing import Any, Optional
 
 from oscillation import OscillationTree
 
@@ -44,6 +44,9 @@ class BootstrapOscillationTree(OscillationTree):
 
         self.logger = logger or logging.getLogger(__name__)
 
+        self.selection_history: list[str] = []
+        self.simulation_history: list[str] = []
+
         self._non_serializable_attrs.extend(
             [
                 "table",
@@ -52,6 +55,8 @@ class BootstrapOscillationTree(OscillationTree):
                 "_Q",
                 "logger",
                 "save_dir",
+                "selection_history",
+                "simulation_history",
             ]
         )
 
@@ -66,35 +71,60 @@ class BootstrapOscillationTree(OscillationTree):
     def Q(self) -> dict[str, float]:
         return self._Q
 
+    def get_state_to_simulate(self, start: Any) -> Any:
+        """**Identical to the base class method CircuiTree.get_state_to_simulate(),
+        except it keeps a record of the selected node**
+
+        Uses the random generator for the given thread to select a state to simulate,
+        starting from the given starting state. If the given starting state is terminal,
+        returns it. Otherwise, selects a random child recursively until a terminal state
+        is reached."""
+        self.selection_history.append(start)
+        return super().get_state_to_simulate(start)
+
     def get_reward(self, state: str) -> float:
+        self.simulation_history.append(state)
         self.iter_count += 1
         if self.iter_count >= self.next_save:
             self.next_save += self.save_every
-            self.save_oscillation_data()
+            self.save_sample_data()
         reward = float(self.rg.uniform(0, 1) < self.Q[state])
         return reward
 
-    def get_oscillation_data(self) -> tuple[list[str], list[float]]:
-        osc_data = []
-        qs = []
-        for n, reward, visits in self.rewards_and_visits:
-            q = reward / max(visits, 1)
-            osc_data.append(n)
-            qs.append(q)
-        return osc_data, qs
+    def get_sample_data(self):
+        # Get the selected and simulated nodes and clear the history
+        selections = self.selection_history.copy()
+        simulations = self.simulation_history.copy()
+        self.selection_history.clear()
+        self.simulation_history.clear()
 
-    def oscillators_to_dataframe(self) -> pd.DataFrame:
-        states, Qs = self.get_oscillation_data()
+        states, rewards, visits = zip(*self.rewards_and_visits)
+        return selections, simulations, states, rewards, visits
+
+    def get_oscillation_data(self) -> tuple[pd.DataFrame, pd.DataFrame]:
+        selections, simulations, states, rewards, visits = self.get_sample_data()
+        Qs = np.divide(rewards, visits, out=np.zeros_like(rewards), where=visits != 0)
         true_Qs = [self.Q[s] for s in states]
-        df = pd.DataFrame({"state": states, "Q": Qs, "true_Q": true_Qs})
-        df = df.sort_values("Q", ascending=False)
-        return df
+        qdf = pd.DataFrame(
+            {
+                "state": states,
+                "reward": rewards,
+                "visits": visits,
+                "Q": Qs,
+                "true_Q": true_Qs,
+            }
+        )
+        qdf = qdf.sort_values("Q", ascending=False)
 
-    def save_oscillation_data(self):
-        oscillator_data = self.oscillators_to_dataframe()
+        sample_data = pd.DataFrame(
+            {"selected_node": selections, "simulated_node": simulations}
+        )
+
+        return qdf, sample_data
+
+    def save_sample_data(self):
         iteration = self.iter_count
         save_stem = f"oscillation_mcts_bootstrap_{iteration}"
-
         self.logger.info(f"Iteration {iteration}")
 
         self.logger.info(f"Saving tree data to {save_stem}*")
@@ -102,9 +132,14 @@ class BootstrapOscillationTree(OscillationTree):
         attrs_target = self.save_dir.joinpath(f"{save_stem}_tree.json")
         self.to_file(gml_target, attrs_target)
 
+        oscillation_df, sample_data = self.get_oscillation_data()
+
         df_target = self.save_dir.joinpath(f"{save_stem}_oscillators.csv")
-        self.logger.info(f"Saving oscillator data to {df_target}")
-        oscillator_data.to_csv(df_target)
+        samples_target = self.save_dir.joinpath(f"{save_stem}_samples.csv")
+        self.logger.info(f"Saving oscillation data to {df_target}")
+        oscillation_df.to_csv(df_target)
+        self.logger.info(f"Saving samples to {samples_target}")
+        sample_data.to_csv(samples_target)
 
 
 def run_search(
@@ -159,10 +194,8 @@ def run_search(
     )
 
     logger.info(f"Running MCTS for {n_steps} steps")
-    ot.search_mcts(
-        n_steps=n_steps, progress_bar=progress_bar, pbar_position=replicate_id
-    )
-    ot.save_oscillation_data()
+    ot.search_mcts(n_steps=n_steps, progress_bar=progress_bar)
+    ot.save_sample_data()
     logger.info(f"Done")
 
 
@@ -181,7 +214,8 @@ def main(
     Q_threshold: float = 0.01,
 ):
     n_workers = min(n_replicates, n_workers or cpu_count())
-    print(f"Running {n_replicates} searches in parallel with {n_workers} workers")
+    print(f"Running {n_replicates} searches in parallel with {n_workers} workers.")
+    print(f"Saving results to {save_dir.resolve().absolute()}")
 
     kw = dict(
         root="ABC::",
@@ -203,16 +237,22 @@ def main(
 
     search_args = zip(prng_seeds, save_dirs)
 
-    with Pool(n_workers) as pool:
-        # Get the index of each process in the pool
-        kw["replicate_ids"] = {c.pid: i for i, c in enumerate(active_children())}
-        run_search_in_process = partial(run_search, **kw)
+    if n_workers == 1:
+        print("Running searches in serial")
+        for args in search_args:
+            run_search(args, **kw)
 
-        # Run the searches in parallel
-        print("Running searches in parallel")
-        pool.map(run_search_in_process, search_args)
+    else:
+        with Pool(n_workers) as pool:
+            # Get the index of each process in the pool
+            kw["replicate_ids"] = {c.pid: i for i, c in enumerate(active_children())}
+            run_search_in_process = partial(run_search, **kw)
 
-        print("Done! Closing pool")
+            # Run the searches in parallel
+            print("Running searches in parallel")
+            pool.map(run_search_in_process, search_args)
+
+            print("Done! Closing pool")
 
 
 if __name__ == "__main__":
@@ -222,17 +262,21 @@ if __name__ == "__main__":
 
     oscillation_table_csv = Path("data/oscillation/230717_motifs.csv")
 
-    save_dir = Path(f"data/oscillation/mcts/bootstrap_short_{now}")
+    save_dir = Path(f"data/oscillation/mcts/mcts_bootstrap_short_{now}")
+    log_dir = Path(f"logs/oscillation/mcts/mcts_bootstrap_short_{now}")
+
+    # save_dir = Path(f"data/oscillation/mcts/mcts_bootstrap_long_{now}")
+    # log_dir = Path(f"logs/oscillation/mcts/mcts_bootstrap_long_{now}")
+
     save_dir.mkdir(exist_ok=True)
-    log_dir = Path(f"logs/oscillation/mcts/bootstrap_{now}")
     log_dir.mkdir(exist_ok=True)
 
     main(
         save_dir=save_dir,
         log_dir=log_dir,
         oscillator_table_csv=oscillation_table_csv,
-        n_workers=15,
-        # n_replicates=1,
+        # n_workers=1,
+        n_workers=13,
         n_replicates=50,
         master_seed=2023,
         n_steps=100_000,
