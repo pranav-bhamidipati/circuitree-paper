@@ -116,7 +116,7 @@ def main(
             root=root,
             seed=seed,
             time_points=time_points,
-            success_threshold=0.005,
+            success_threshold=0.01,
             autocorr_threshold=0.5,
             init_mean=10.0,
             columns=columns,
