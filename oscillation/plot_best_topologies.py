@@ -1,7 +1,10 @@
 from datetime import date
-from typing import Optional
+from typing import Iterable, Optional
 from circuitree.viz import plot_network
 import matplotlib.pyplot as plt
+from matplotlib.ticker import AutoMinorLocator
+from more_itertools import powerset
+import numpy as np
 import pandas as pd
 from pathlib import Path
 import seaborn as sns
@@ -19,7 +22,7 @@ def main(
     save_dir: Path = Path("figures/oscillation"),
     bar_xshrink: float = 2 / 7,
     bar_yshrink: float = 1.0,
-    bar_label_every: int = 1,
+    bar_ticks: Iterable[int] = None,
     n_bar: Optional[int] = None,
     save: bool = False,
     fmt: str = "png",
@@ -30,6 +33,7 @@ def main(
     xlim=(-1.95, 1.65),
     ylim=(-1.4, 1.9),
     suptitle: bool = True,
+    palette: str = "muted",
     **kwargs,
 ):
     plot_rows, plot_cols = plot_shape
@@ -39,22 +43,33 @@ def main(
     df = pd.read_csv(results_csv, index_col=state_column)
     df = df.sort_values(p_osc_column, ascending=False)
     df["rank"] = pd.Categorical(range(1, df.shape[0] + 1))
-    df_plot = df.iloc[:n_plot]
 
     _kw = dict(components=("A", "B", "C"), interactions=("activates", "inhibits"))
     _kw |= tree_kwargs
     grammar = OscillationGrammar(**_kw)
     motifs = {}
     for motif in plot_motifs:
-        if motif in df_plot.columns:
-            motifs[motif] = df_plot[motif]
+        if motif in df.columns:
+            motifs[motif] = df[motif]
         else:
             has_motif = [grammar.has_motif(s, motif) for s in df_plot.index]
             mseries = pd.Series(has_motif, index=df_plot.index, name=motif)
             motifs[motif] = mseries
 
-    figsize = figsize or (plot_cols, plot_rows * 0.8)
-    fig = plt.figure(figsize=figsize)
+    motifs_set = set(motifs.keys())
+    motif_combinations = list(ms for ms in powerset(motifs.keys()))
+    # motif_combination_stri`ngs = ["+".join(ms) or "(none)" for ms in motif_combinations]
+    motif_combinations_present = -np.ones(len(df), dtype=int)
+    for i, mc in enumerate(motif_combinations):
+        not_in_mc = motifs_set - set(mc)
+        states_with_ms_in_mc = np.logical_and.reduce([motifs[m] for m in mc], axis=0)
+        states_with_ms_not_in_mc = np.logical_or.reduce(
+            [motifs[m] for m in not_in_mc], axis=0
+        )
+        states_with_mc = np.logical_and(states_with_ms_in_mc, ~states_with_ms_not_in_mc)
+        motif_combinations_present[states_with_mc] = i
+
+    df_plot = df.iloc[:n_plot]
 
     title_font = dict(
         ha="center",
@@ -78,6 +93,9 @@ def main(
         color="white",
         weight="bold",
     )
+
+    figsize = figsize or (plot_cols, plot_rows * 0.8)
+    fig = plt.figure(figsize=figsize)
 
     num_x = 0.125
     num_y = 0.85
@@ -133,20 +151,35 @@ def main(
     df_bars["rank"] = df_bars["rank"].cat.remove_unused_categories()
 
     # Skip every nth bar label if labels are cluttered
-    yticklabels = [""] * n_bar
-    yticklabels[::bar_label_every] = [
-        f"{i}" for i in range(1, n_bar + 1, bar_label_every)
-    ]
-    figsize = (figsize[0] * bar_xshrink, figsize[1] * bar_yshrink)
+    yticklabels = [f"{i}" if i in bar_ticks else "" for i in range(1, n_bar + 1)]
 
+    # figsize = (figsize[0] * bar_xshrink, figsize[1] * bar_yshrink)
+    # fig = plt.figure(figsize=figsize)
+    # ax = fig.add_subplot(1, 1, 1)
+    # bars = sns.barplot(data=df_bars, x=p_osc_column, y="rank", color="gray", ax=ax)
+    # ax.set_ylabel(None)
+    # ax.set_yticks(range(n_bar))
+    # ax.set_yticklabels(yticklabels)
+    # ax.set_xlabel(r"$Q$")
+    # ax.set_xticks([0, 0.4, 0.8])
+
+    figsize = (figsize[0] * bar_xshrink, figsize[1] * bar_yshrink)
     fig = plt.figure(figsize=figsize)
     ax = fig.add_subplot(1, 1, 1)
-    bars = sns.barplot(data=df_bars, x=p_osc_column, y="rank", color="gray", ax=ax)
-    ax.set_ylabel(None)
-    ax.set_yticks(range(n_bar))
-    ax.set_yticklabels(yticklabels)
-    ax.set_xlabel(r"$Q$")
-    ax.set_xticks([0, 0.4, 0.8])
+
+    bars = sns.barplot(data=df_bars, x="rank", y=p_osc_column, color="gray", ax=ax)
+
+    bar_colors = sns.color_palette(palette, n_colors=len(motif_combinations))
+    for patch, mc in zip(bars.patches, motif_combinations_present):
+        patch.set_facecolor(bar_colors[mc])
+
+    ax.set_xlabel(None)
+    ax.set_xticks(range(n_bar))
+    ax.set_xticklabels(yticklabels)
+    ax.set_ylabel(r"$Q$")
+    ax.set_yticks([0.0, 0.5])
+    ax.yaxis.set_minor_locator(AutoMinorLocator())
+
     sns.despine()
     plt.tight_layout()
 
@@ -174,10 +207,13 @@ if __name__ == "__main__":
         auto_shrink=0.9,
         width=0.005,
         plot_labels=False,
-        fmt="eps",
-        plot_shape=(5, 2),
-        bar_xshrink=0.6,
-        bar_yshrink=0.75,
-        bar_label_every=5,
+        fmt="pdf",
+        plot_shape=(4, 2),
+        # bar_xshrink=0.6,
+        # bar_yshrink=0.75,
+        # bar_label_every=5,
+        bar_xshrink=1.5,
+        bar_yshrink=0.3,
+        bar_ticks=[1] + list(range(5, 26, 5)),
         n_bar=25,
     )
