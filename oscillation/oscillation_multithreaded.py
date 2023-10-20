@@ -8,6 +8,7 @@ from gevent.event import Event
 from gevent.queue import Queue
 from itertools import count
 from celery.result import AsyncResult
+import numpy as np
 from pathlib import Path
 import redis
 from typing import Optional
@@ -74,7 +75,6 @@ class MultithreadedOscillationTree(ParallelNetworkTree):
         nt: int = 2000,
         nchunks: int = 5,
         database: redis.Redis = database,
-        min_ssa_seed: Optional[int] = None,
         queue_size: Optional[int] = None,
         logger=None,
         **kwargs,
@@ -109,7 +109,6 @@ class MultithreadedOscillationTree(ParallelNetworkTree):
         self.n_param_sets: int = self.database.hlen("parameter_table")
 
         self.logger = logger or task_logger
-        self.min_ssa_seed = min_ssa_seed or 0
 
         # Specify attributes that should be skipped when dumping to file
         self._non_serializable_attrs.extend(
@@ -135,15 +134,19 @@ class MultithreadedOscillationTree(ParallelNetworkTree):
             save_dir=self.save_dir,
         )
 
-    def get_random_seed(self, visit: int) -> int:
-        return self.min_ssa_seed + visit % self.n_param_sets
+    def get_param_set_index(self, state: str, visit: int) -> int:
+        """Get the index of the parameter set to use for this state and visit number."""
+        # Shuffle the param sets in a manner unique to each state
+        param_set_indices = np.arange(self.n_param_sets)
+        np.random.default_rng(hash(state)).shuffle(param_set_indices)
+        return param_set_indices[visit % self.n_param_sets]
 
     def get_reward(self, state: str, visit_number: int, **kwargs) -> float:
         """Get the simulation result for this state-seed pair"""
-        seed = self.get_random_seed(visit_number)
-        self.logger.info(f"Getting reward for {seed=}, {state=}")
+        param_index = self.get_param_set_index(state, visit_number)
+        self.logger.info(f"Getting reward for {visit_number=}, {state=}")
         task: AsyncResult = run_ssa_no_time_limit.apply_async(
-            args=(state, int(seed)), kwargs=self.sim_kwargs, **kwargs
+            args=(state, int(param_index)), kwargs=self.sim_kwargs, **kwargs
         )
 
         # Don't update iteration counter until a running backup is complete

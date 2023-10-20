@@ -13,7 +13,7 @@ INT64_MAXVAL = np.iinfo(np.int64).max
 app = Celery("tasks")
 app.config_from_object("celeryconfig")
 task_logger = get_task_logger(__name__)
-database = redis.Redis.from_url(app.conf["broker_url"], db=0)
+database: redis.Redis = redis.Redis.from_url(app.conf["broker_url"], db=0)
 # database = redis.Redis(host="localhost", port=6379, db=0)
 n_param_sets = database.hlen("parameter_table")
 
@@ -21,28 +21,30 @@ n_param_sets = database.hlen("parameter_table")
 @app.task(queue="simulations")
 def run_ssa_no_time_limit(
     state: str,
-    seed: int,
+    param_index: int,
     dt: float,  # seconds
     nt: int,
     nchunks: int,
     autocorr_threshold: float,
     save_dir: str,
 ) -> float:
-    task_logger.info(f"Received {seed=}, {state=}")
+    task_logger.info(f"Received {param_index=}, {state=}")
     state_key = "state_" + state.strip("*")
-    existing_entry = database.hget(state_key, str(seed))
+    existing_entry = database.hget(state_key, str(param_index))
     task_logger.info(f"Existing entry: {existing_entry}")
     if existing_entry is not None:
         autocorr_min, sim_time = json.loads(existing_entry)
         if (autocorr_min <= 0.0) and (sim_time >= 0.0):
             task_logger.info(
                 f"Entry already exists. Returning autocorr. min of {autocorr_min} "
-                f"for {seed=}, {state=}"
+                f"for {param_index=}, {state=}"
             )
             return autocorr_min
 
     # Use the parameter set corresponding to the visit number
-    prots0, params = json.loads(database.hget("parameter_table", str(seed)))
+    seed, prots0, params = json.loads(
+        database.hget("parameter_table", str(param_index))
+    )
     kwargs = dict(
         seed=seed,
         prots0=prots0,
@@ -63,19 +65,21 @@ def run_ssa_no_time_limit(
     kwargs["sim_time"] = sim_time
     kwargs["prots_t"] = prots_t.tolist()
 
-    # Register the state-seed pair and its result in the database
+    # Register the state-index pair and its result in the database
     task_logger.info(
         f"Finished in {sim_time:.4f} secs with autocorr. min: {autocorr_min:.4f}. "
         "Entering result in database."
     )
     database.sadd("transposition_table_keys", state_key)
-    database.hset(state_key, str(seed), json.dumps([autocorr_min, sim_time]))
+    database.hset(state_key, str(param_index), json.dumps([autocorr_min, sim_time]))
 
     # Save data for any oscillating simulations
     oscillated = -autocorr_min > autocorr_threshold
     if oscillated:
         task_logger.info(f"Oscillation detected, saving data for {seed=}, {state=}.")
-        save_results.delay(prefix="osc_", autocorr_min=autocorr_min, **kwargs)
+        save_results.delay(
+            prefix="osc_", param_index=param_index, autocorr_min=autocorr_min, **kwargs
+        )
 
     return autocorr_min
 
@@ -114,6 +118,7 @@ def _run_ssa(
 
 @app.task(queue="io", ignore_result=True)
 def save_results(
+    param_index: int,
     seed: int,
     state: str,
     dt: float,
@@ -127,7 +132,7 @@ def save_results(
     prots_t: list[tuple[float, ...]] = None,
     **kwargs,
 ):
-    fname = f"{prefix}state_{state}_seed{seed}.hdf5"
+    fname = f"{prefix}state_{state}_index{param_index}.hdf5"
     fpath = Path(save_dir) / fname
     if fpath.exists():
         task_logger.info(f"File {fpath} already exists. Skipping.")
@@ -136,6 +141,7 @@ def save_results(
     task_logger.info(f"Saving to {fpath}")
     with h5py.File(fpath, "w") as f:
         f.create_dataset("y_t", data=prots_t)
+        f.attrs["param_index"] = param_index
         f.attrs["autocorr_min"] = autocorr_min
         f.attrs["state"] = state
         f.attrs["seed"] = seed

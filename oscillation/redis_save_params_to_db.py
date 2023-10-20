@@ -1,3 +1,4 @@
+from itertools import islice
 import json
 import redis
 import pandas as pd
@@ -6,8 +7,9 @@ from pathlib import Path
 from oscillation_app import app
 
 
-def _split_seq_at_index(seq, i):
-    return seq[:i], seq[i:]
+def _split_seq_into_chunks(seq, chunk_sizes):
+    it = iter(seq)
+    return [list(islice(it, size)) for size in chunk_sizes]
 
 
 def main(
@@ -15,15 +17,15 @@ def main(
     n_init_columns: int,
     n_parameters: int = 10,
     database_url: str | Path = None,
-    seed_column: str = "sample_num",
+    index_column: str = "param_index",
     table_name: str = "parameter_table",
 ):
     print("Loading parameter sets")
-    params_df = pd.read_csv(param_sets_csv, index_col=seed_column)
+    params_df = pd.read_csv(param_sets_csv, index_col=index_column)
 
     print("Connecting to database")
     database_url = database_url or app.conf["broker_url"]
-    database = redis.Redis.from_url(database_url)
+    database: redis.Redis = redis.Redis.from_url(database_url)
 
     columns = params_df.columns
     ncol = len(columns)
@@ -34,11 +36,12 @@ def main(
         )
     params_df = params_df.sort_index()
 
-    # JSON-serialize each row as a [prots0, params] pair
+    # JSON-serialize each row as a [seed, prots0, params] tuple
+    chunk_sizes = (1, n_init_columns, n_parameters)
     params_mapping = {}
-    for seed, *row in params_df.itertuples():
-        prots0, params = _split_seq_at_index(row, n_init_columns)
-        params_mapping[str(seed)] = json.dumps([prots0, params])
+    for pidx, *row in params_df.itertuples():
+        seed, prots0, params = _split_seq_into_chunks(row, chunk_sizes)
+        params_mapping[str(pidx)] = json.dumps([seed, prots0, params])
 
     # Store in database
     clear_before_storing = (
@@ -59,12 +62,12 @@ def main(
 if __name__ == "__main__":
     param_sets_csv = Path(
         # "~/git/circuitree-paper/data/oscillation/param_sets_queue_10000.csv"
-        "~/git/circuitree-paper/data/oscillation/param_sets_queue_10000_5tf.csv"
+        # "~/git/circuitree-paper/data/oscillation/param_sets_queue_10000_5tf.csv"
+        "~/git/circuitree-paper/data/oscillation/231020_param_sets_10000_5tf.csv"
     ).expanduser()
 
     main(
         param_sets_csv=param_sets_csv,
         n_init_columns=5,
         n_parameters=10,
-        seed_column="sample_num",
     )
