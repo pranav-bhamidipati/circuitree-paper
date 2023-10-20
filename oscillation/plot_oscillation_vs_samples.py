@@ -8,7 +8,7 @@ from pathlib import Path
 import seaborn as sns
 import warnings
 
-from oscillation import OscillationGrammar
+from circuitree.models import SimpleNetworkGrammar
 
 _network_kwargs = dict(
     padding=0.5,
@@ -116,7 +116,7 @@ def main(
         plt.savefig(fpath, dpi=dpi)
     plt.close()
 
-    grammar = OscillationGrammar(
+    grammar = SimpleNetworkGrammar(
         components=["A", "B", "C"], interactions=["activates", "inhibits"]
     )
     network_kwargs = _network_kwargs | (network_kwargs or dict())

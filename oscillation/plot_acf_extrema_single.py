@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from pathlib import Path
 
-from oscillation import OscillationGrammar
+from circuitree.models import SimpleNetworkGrammar
 from tf_network import (
     autocorrelate,
     compute_lowest_minimum,
@@ -14,7 +14,7 @@ from tf_network import (
 )
 
 
-grammar = OscillationGrammar(
+grammar = SimpleNetworkGrammar(
     components=["A", "B", "C"], interactions=["activates", "inhibits"]
 )
 
@@ -118,7 +118,7 @@ def plot_network_quantity_and_acorr(
     if save:
         today = date.today().strftime("%y%m%d")
         fname = f"{today}_copynum_and_acf_example{suffix}.{fmt}"
-        fpath = plot_dir.joinpath(fname).resolve().absolute()
+        fpath = Path(plot_dir).joinpath(fname).resolve().absolute()
         print("Writing to:", fpath)
         plt.savefig(fpath, dpi=dpi, transparent=True)
 

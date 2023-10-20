@@ -8,7 +8,7 @@ import pandas as pd
 import numpy as np
 import warnings
 
-from oscillation import OscillationGrammar
+from circuitree.models import SimpleNetworkGrammar
 
 from gillespie import (
     PARAM_NAMES,
@@ -25,7 +25,7 @@ convert_to_sampled_params = partial(
 
 def _get_n_interactions(
     state: str,
-    grammar: OscillationGrammar,
+    grammar: SimpleNetworkGrammar,
 ):
     components, activations, inhibitions = grammar.parse_genotype(state)
     return len(activations) + len(inhibitions)
@@ -34,9 +34,9 @@ def _get_n_interactions(
 def _get_motif(
     state: str,
     motif: str,
-    grammar: OscillationGrammar,
+    grammar: SimpleNetworkGrammar,
 ):
-    return grammar.has_motif(state, motif)
+    return grammar.has_pattern(state, motif)
 
 
 def main(
@@ -49,7 +49,7 @@ def main(
     fmt: str = "png",
     dpi: int = 300,
 ):
-    grammar = OscillationGrammar(
+    grammar = SimpleNetworkGrammar(
         components=["A", "B", "C"], interactions=["activates", "inhibits"]
     )
     get_n_interactions = partial(_get_n_interactions, grammar=grammar)

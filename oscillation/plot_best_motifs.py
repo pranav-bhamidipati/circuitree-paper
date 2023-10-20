@@ -17,9 +17,9 @@ from typing import Any, Optional
 import warnings
 
 from circuitree.viz import plot_network
+from circuitree.models import SimpleNetworkGrammar
 from circuitree.modularity import information_gain
 from graph_utils import compute_Q_tilde, merge_search_graphs
-from oscillation import OscillationGrammar
 
 _network_kwargs = dict(
     padding=0.5,
@@ -155,7 +155,7 @@ def main(
     motifs = top_Qs["node"].tolist()
     motif_Qs = top_Qs["p_success"].tolist()
 
-    grammar = OscillationGrammar(
+    grammar = SimpleNetworkGrammar(
         components=["A", "B", "C"], interactions=["activates", "inhibits"]
     )
     network_kwargs = _network_kwargs | (network_kwargs or dict())

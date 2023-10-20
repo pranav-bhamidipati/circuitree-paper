@@ -5,18 +5,18 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
-from oscillation import OscillationGrammar
+from circuitree.models import SimpleNetworkGrammar
 
 
 def _get_n_motifs_present(
     samples: list[str],
     motif_combination_strings: list[str],
-    grammar: OscillationGrammar,
+    grammar: SimpleNetworkGrammar,
 ):
     motif_combinations_counter = np.zeros(len(motif_combination_strings), dtype=int)
     mc_index = {mc: i for i, mc in enumerate(motif_combination_strings)}
     for sample in samples:
-        motif_set = [m for m in motifs if grammar.has_motif(sample, motifs[m])]
+        motif_set = [m for m in motifs if grammar.has_pattern(sample, motifs[m])]
         motif_combination_string = "+".join(motif_set) or "(none)"
         motif_combinations_counter[mc_index[motif_combination_string]] += 1
     return motif_combinations_counter
@@ -33,7 +33,7 @@ def main(
     delim="_",
     which_in_split=-2,
 ):
-    grammar = OscillationGrammar(components=components, interactions=interactions)
+    grammar = SimpleNetworkGrammar(components=components, interactions=interactions)
 
     motif_combinations = []
     motif_combination_strings = []

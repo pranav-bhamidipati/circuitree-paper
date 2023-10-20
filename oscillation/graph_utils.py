@@ -1,3 +1,5 @@
+from circuitree import CircuitGrammar
+from circuitree.models import SimpleNetworkGrammar
 from functools import partial
 from typing import Any, Container, Iterable, Mapping, Optional
 import networkx as nx
@@ -14,7 +16,7 @@ def _edge_reward_loss(node1, node2, edge_attrs: Mapping) -> float:
     return 1 - edge_attrs["reward"] / max(1, edge_attrs["visits"])
 
 
-def get_successful_states(G: nx.DiGraph, grammar: Any, cutoff: float):
+def get_successful_states(G: nx.DiGraph, grammar: CircuitGrammar, cutoff: float):
     for n in G.nodes:
         if grammar.is_terminal(n):
             m = _get_mean_reward(G, n)
@@ -94,7 +96,7 @@ def Q_posterior(n, N):
 
 
 def get_posterior(
-    G: nx.DiGraph, grammar: Any, node: Any, flat: bool = True
+    G: nx.DiGraph, grammar: CircuitGrammar, node: Any, flat: bool = True
 ) -> beta_gen | BetaMixtureModel:
     """Returs the posterior distribution of success probability for a given node in the
     search graph G. For terminal nodes, this posterior is computed directly from the
@@ -116,7 +118,7 @@ def get_posterior(
         raise NotImplementedError("Hierarchical posteriors not supported.")
 
 
-def make_complexity_graph(G: nx.DiGraph, grammar: Any, cutoff: float) -> nx.DiGraph:
+def make_complexity_graph(G: nx.DiGraph, grammar: CircuitGrammar, cutoff: float) -> nx.DiGraph:
     """Given a search graph G and a root node, return the complexity graph.
 
     The complexity graph contains only the terminal nodes of G that are "successful"
@@ -186,7 +188,7 @@ def compute_Q_tilde(
 
 
 def prune_complexity_tree(
-    tree: nx.DiGraph, root_node: Any, grammar: Any, n_best: int, success_cutoff: float
+    tree: nx.DiGraph, root_node: Any, grammar: CircuitGrammar, n_best: int, success_cutoff: float
 ) -> set[Any]:
     # Get the terminal nodes that are successful
     key = partial(_get_mean_reward, tree)
@@ -207,7 +209,7 @@ def prune_complexity_tree(
 def make_complexity_tree_mst(
     G: nx.DiGraph,
     root_node: Any,
-    grammar: Any,
+    grammar: CircuitGrammar,
     success_cutoff: float,
     n_best: Optional[int] = None,
     **kwargs,
@@ -321,7 +323,7 @@ def merge_search_graphs(
     return graph
 
 
-def n_connected_components_in_circuit(genotype: Any, grammar: Any) -> int:
+def n_connected_components_in_circuit(genotype: Any, grammar: SimpleNetworkGrammar) -> int:
     """Returns the number of connected components in the circuit represented by the
     genotype. Ignores circuit components that have no connections.
 
@@ -381,7 +383,7 @@ from numba import njit
 
 def bayesian_p_value_of_motif(
     G: nx.DiGraph,
-    grammar: Any,
+    grammar: CircuitGrammar,
     state: Any,
     sample_size: int,
     U: Optional[set[Any]] = None,
@@ -429,7 +431,7 @@ def split_terminals_by_reachability(
     G: nx.DiGraph,
     from_node: Any,
     U: Optional[set[Any]] = None,
-    grammar: Optional[Any] = None,
+    grammar: Optional[CircuitGrammar] = None,
 ) -> tuple[set[Any], set[Any]]:
     """Given a node in the search graph G, return the disjoint sets X and Y of reachable
     and non-reachable terminal states, respectively (X ^ Y = {emptyset}).

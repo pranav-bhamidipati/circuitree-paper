@@ -14,8 +14,7 @@ from typing import Optional
 import datetime
 from uuid import uuid4
 
-from circuitree.parallel import MultithreadedCircuiTree
-from oscillation import OscillationGrammar
+from circuitree.parallel import ParallelNetworkTree
 from redis_backup import main as backup_database
 
 from oscillation_app import database, app, task_logger, run_ssa_no_time_limit
@@ -64,7 +63,7 @@ class AtomicCounter:
         return next(self._incs) - next(self._accesses)
 
 
-class MultithreadedOscillationTree(OscillationGrammar, MultithreadedCircuiTree):
+class MultithreadedOscillationTree(ParallelNetworkTree):
     def __init__(
         self,
         *,
@@ -125,8 +124,6 @@ class MultithreadedOscillationTree(OscillationGrammar, MultithreadedCircuiTree):
                 "result_history",
             ]
         )
-
-        # self.max_iter_per_timestep = max_iter_per_timestep-
 
     @property
     def sim_kwargs(self):

@@ -27,7 +27,7 @@
 from datetime import datetime
 from functools import partial
 from tqdm import tqdm
-from oscillation import OscillationTree, OscillationGrammar
+from oscillation import OscillationTree
 import networkx as nx
 import numpy as np
 import pandas as pd
@@ -110,7 +110,6 @@ def main(
     p_oscs = np.array([binom(N, Q).sf(Q_thresh * N) for Q in Qs])
 
     # Make the full graph of the design space
-    grammar = OscillationGrammar(components=components, interactions=interactions)
     tree = OscillationTree(
         components=components, interactions=interactions, root="ABC::"
     )
@@ -118,7 +117,7 @@ def main(
 
     # For each nonterminal, compute a p-value for being a motif
     nonterminals = (
-        n for n in tree.graph.nodes if not grammar.is_terminal(n) and n != tree.root
+        n for n in tree.graph.nodes if not tree.grammar.is_terminal(n) and n != tree.root
     )
     n_nonterminals = len(tree.graph.nodes) - len(terminals) - 1
     p_values = {}

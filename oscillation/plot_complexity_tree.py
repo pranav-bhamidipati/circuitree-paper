@@ -1,5 +1,6 @@
 from itertools import chain, islice
 from circuitree.viz import plot_network
+from circuitree import CircuitGrammar
 from datetime import date, datetime
 from functools import partial
 import json
@@ -176,7 +177,7 @@ def plot_complexity_tree(
 def main(
     search_graph_gml: Path | Iterable[Path],
     search_graph_json: Path,
-    grammar: Any,
+    grammar: CircuitGrammar,
     success_cutoff: float = 0.01,
     n_best: int = 100,
     reverse_x: bool = False,
@@ -677,7 +678,7 @@ def main(
 
 
 if __name__ == "__main__":
-    from oscillation import OscillationGrammar
+    from circuitree.models import SimpleNetworkGrammar
 
     # # 100k MCTS iterations
     # search_graph_gml = Path(
@@ -707,7 +708,7 @@ if __name__ == "__main__":
     )
     save_dir = Path("figures/oscillation")
 
-    grammar = OscillationGrammar(
+    grammar = SimpleNetworkGrammar(
         components=["A", "B", "C"], interactions=["activates", "inhibits"]
     )
 

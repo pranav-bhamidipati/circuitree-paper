@@ -4,7 +4,7 @@ from circuitree.viz import plot_network
 import matplotlib.pyplot as plt
 from pathlib import Path
 
-from oscillation import OscillationGrammar
+from circuitree.models import SimpleNetworkGrammar
 
 _network_kwargs = dict(
     padding=0.5,
@@ -26,9 +26,8 @@ def main(
 ):
     # Plotting parameters
     network_kwargs = _network_kwargs | kwargs
-    grammar = OscillationGrammar(
-        components=["A", "B", "C"],
-        interactions=["activates", "inhibits"],
+    grammar = SimpleNetworkGrammar(
+        components=["A", "B", "C"], interactions=["activates", "inhibits"]
     )
 
     ring_topologies = ["AB::ABa_BAi", "ABC::ABi_BCi_CAi", "ABC::ABa_BCa_CAi"]

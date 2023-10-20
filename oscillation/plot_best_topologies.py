@@ -9,7 +9,7 @@ import pandas as pd
 from pathlib import Path
 import seaborn as sns
 
-from oscillation import OscillationGrammar
+from circuitree.models import SimpleNetworkGrammar
 
 
 def main(
@@ -46,13 +46,13 @@ def main(
 
     _kw = dict(components=("A", "B", "C"), interactions=("activates", "inhibits"))
     _kw |= tree_kwargs
-    grammar = OscillationGrammar(**_kw)
+    grammar = SimpleNetworkGrammar(**_kw)
     motifs = {}
     for motif in plot_motifs:
         if motif in df.columns:
             motifs[motif] = df[motif]
         else:
-            has_motif = [grammar.has_motif(s, motif) for s in df_plot.index]
+            has_motif = [grammar.has_pattern(s, motif) for s in df_plot.index]
             mseries = pd.Series(has_motif, index=df_plot.index, name=motif)
             motifs[motif] = mseries
 

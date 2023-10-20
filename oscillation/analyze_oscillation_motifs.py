@@ -22,7 +22,7 @@ def main(
     motif_columns = []
     for name, motif in motifs.items():
         motif_col = df.groupby("state")["state"].agg(
-            lambda s: tree.has_motif(s.iloc[0], motif)
+            lambda s: tree.grammar.has_pattern(s.iloc[0], motif)
         )
         motif_col.name = name
         motif_columns.append(motif_col)
