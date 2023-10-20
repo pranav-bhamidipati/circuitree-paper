@@ -71,16 +71,16 @@ class BootstrapOscillationTree(OscillationTree):
     def Q(self) -> dict[str, float]:
         return self._Q
 
-    def get_state_to_simulate(self, start: Any) -> Any:
-        """**Identical to the base class method CircuiTree.get_state_to_simulate(),
-        except it keeps a record of the selected node**
+    def get_random_terminal_descendant(self, start: Any) -> Any:
+        """**Identical to the CircuiTree class method, except it keeps a record of the
+        selected node**
 
         Uses the random generator for the given thread to select a state to simulate,
         starting from the given starting state. If the given starting state is terminal,
         returns it. Otherwise, selects a random child recursively until a terminal state
         is reached."""
         self.selection_history.append(start)
-        return super().get_state_to_simulate(start)
+        return super().get_random_terminal_descendant(start)
 
     def get_reward(self, state: str) -> float:
         self.simulation_history.append(state)
