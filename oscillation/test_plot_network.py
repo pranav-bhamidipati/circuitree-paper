@@ -1,11 +1,11 @@
 from circuitree.viz import plot_network
-from circuitree.models import SimpleNetworkTree
+from circuitree.models import SimpleNetworkGrammar
 import matplotlib.pyplot as plt
 from pathlib import Path
 
 
 def main(g, save=False, save_dir=None, fmt="png", dpi=300, transparent=False, **kwargs):
-    components, activations, inhibitions = SimpleNetworkTree.parse_genotype(
+    components, activations, inhibitions = SimpleNetworkGrammar.parse_genotype(
         g, nonterminal_ok=True
     )
 

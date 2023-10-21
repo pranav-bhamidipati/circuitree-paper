@@ -95,7 +95,7 @@ def main(
 
     for g, (x, y) in pos.items():
         plot_network(
-            *tree.parse_genotype(g, nonterminal_ok=True),
+            *tree.grammar.parse_genotype(g, nonterminal_ok=True),
             center=(x, y),
             plot_labels=False,
             **network_kwargs,
@@ -116,7 +116,7 @@ def main(
     fig1a_sim_node = plt.figure(figsize=(1.0, 1.0))
     sim_node = f"{repressilator}_BBa_CCi"
     plot_network(
-        *tree.parse_genotype(sim_node, nonterminal_ok=True),
+        *tree.grammar.parse_genotype(sim_node, nonterminal_ok=True),
         plot_labels=False,
         **network_kwargs,
     )
@@ -150,7 +150,7 @@ def main(
 
     fig1a_best = plt.figure(figsize=(best_osc_scale, best_osc_scale))
     plot_network(
-        *tree.parse_genotype(best_oscillator, nonterminal_ok=True),
+        *tree.grammar.parse_genotype(best_oscillator, nonterminal_ok=True),
         plot_labels=False,
         **network_kwargs,
     )

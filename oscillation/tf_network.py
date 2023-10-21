@@ -1,5 +1,4 @@
-from circuitree import SimpleNetworkTree
-from more_itertools import chunked_even
+from circuitree import SimpleNetworkGrammar
 from numba import stencil, njit
 import numpy as np
 from scipy.signal import correlate
@@ -59,7 +58,7 @@ class TFNetworkModel:
             self.components,
             self.activations,
             self.inhibitions,
-        ) = SimpleNetworkTree.parse_genotype(genotype)
+        ) = SimpleNetworkGrammar.parse_genotype(genotype)
         self.m = len(self.components)
         self.a = len(self.activations)
         self.r = len(self.inhibitions)
