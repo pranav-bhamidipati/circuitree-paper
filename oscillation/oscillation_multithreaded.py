@@ -11,6 +11,7 @@ from celery.result import AsyncResult
 import numpy as np
 from pathlib import Path
 import redis
+import sys
 from typing import Optional
 import datetime
 from uuid import uuid4
@@ -142,7 +143,8 @@ class MultithreadedOscillationTree(ParallelNetworkTree):
         """Get the index of the parameter set to use for this state and visit number."""
         # Shuffle the param sets in a manner unique to each state
         param_set_indices = np.arange(self.n_param_sets)
-        np.random.default_rng(hash(state)).shuffle(param_set_indices)
+        hash_val = hash(state) + sys.maxsize  # Make sure it's non-negative
+        np.random.default_rng(hash_val).shuffle(param_set_indices)
         return param_set_indices[visit % self.n_param_sets]
 
     def get_reward(self, state: str, visit_number: int, **kwargs) -> float:
