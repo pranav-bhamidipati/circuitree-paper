@@ -23,24 +23,24 @@ def main(
     print("Loading parameter sets")
     params_df = pd.read_csv(param_sets_csv, index_col=index_column)
 
-    print("Connecting to database")
-    database_url = database_url or app.conf["broker_url"]
-    database: redis.Redis = redis.Redis.from_url(database_url)
-
     columns = params_df.columns
     ncol = len(columns)
-    if ncol != n_init_columns + n_parameters:
+    if ncol != 1 + n_init_columns + n_parameters:
         raise ValueError(
             f"Expected dataframe with {n_init_columns + n_parameters} columns, "
             f"not {ncol}."
         )
     params_df = params_df.sort_index()
 
+    print("Connecting to database")
+    database_url = database_url or app.conf["broker_url"]
+    database: redis.Redis = redis.Redis.from_url(database_url)
+
     # JSON-serialize each row as a [seed, prots0, params] tuple
     chunk_sizes = (1, n_init_columns, n_parameters)
     params_mapping = {}
     for pidx, *row in params_df.itertuples():
-        seed, prots0, params = _split_seq_into_chunks(row, chunk_sizes)
+        (seed,), prots0, params = _split_seq_into_chunks(row, chunk_sizes)
         params_mapping[str(pidx)] = json.dumps([seed, prots0, params])
 
     # Store in database
