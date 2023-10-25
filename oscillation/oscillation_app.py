@@ -5,7 +5,7 @@ import json
 import numpy as np
 from pathlib import Path
 import redis
-from time import perf_counter
+from time import perf_counter, sleep
 from tf_network import TFNetworkModel
 
 INT64_MAXVAL = np.iinfo(np.int64).max
@@ -36,7 +36,10 @@ def run_ssa_no_time_limit(
         autocorr_min, sim_time = json.loads(existing_entry)
         if (autocorr_min <= 0.0) and (sim_time >= 0.0):
             task_logger.info(
-                f"Entry already exists. Returning autocorr. min of {autocorr_min} "
+                f"Entry already exists. Sleeping for 5s..."
+                )
+            sleep(5.0)
+            task_logger.info(f"Returning autocorr. min of {autocorr_min} "
                 f"for {param_index=}, {state=}"
             )
             return autocorr_min
