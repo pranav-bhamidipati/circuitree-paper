@@ -5,6 +5,7 @@ monkey.patch_all()
 from time import perf_counter
 from gevent import getcurrent
 from gevent.event import Event
+# from gevent.lock import RLock
 from gevent.queue import Queue
 from itertools import count
 from celery.result import AsyncResult
@@ -91,6 +92,12 @@ class MultithreadedOscillationTree(ParallelNetworkTree):
         self.success_threshold = success_threshold
 
         self.tree_id = str(uuid4())
+
+        # self.n_synced_threads = 0
+        # self.threads_are_synced = Event()
+        # self.threads_are_synced.set()
+        # self.thread_lock = RLock()
+
         self.backup_not_in_progress = ManagedEvent()
         self.backup_not_in_progress.set()
         self.last_backed_up_iteration: int = 0
@@ -120,6 +127,9 @@ class MultithreadedOscillationTree(ParallelNetworkTree):
                 "save_dir",
                 "logger",
                 "database",
+                # "n_synced_threads",
+                # "threads_are_synced",
+                # "thread_lock",
                 "backup_not_in_progress",
                 "last_backed_up_iteration",
                 "global_iteration",
@@ -188,6 +198,7 @@ def progress_and_backup_in_thread(
     mtree: MultithreadedOscillationTree,
     iteration: int,
     *args,
+    progress_every: int = 10,
     backup_dir: str | Path,
     backup_every: int = 3600,
     n_tree_backups: int = 10,
@@ -196,11 +207,17 @@ def progress_and_backup_in_thread(
     backup_results: bool = True,
     force_backup: bool = False,
     dry_run: bool = False,
+    # skip_sync: bool = False,
     **db_kwargs,
 ):
-    """Callback function to report progress of MCTS search and save the tree to disk."""
+    """Callback function called at the end of every `callback_every` steps *per-thread*.
+    When called:
+        1) Reports progress of MCTS search
+        2) If enough time has elapsed, backs up the tree to disk
+        3) [Commented out] Blocks until all threads complete their callback
+    """
     thread_id = getattr(getcurrent(), "minimal_ident", "__main__")
-    if iteration > 0:
+    if iteration > 0 and iteration % progress_every == 0:
         mtree.logger.info(
             f"Iterations complete: {mtree.global_iteration.value()} "
             f"({iteration} in thread {thread_id}))"
@@ -208,10 +225,7 @@ def progress_and_backup_in_thread(
 
     # Backup the tree if enough time has elapsed
     now = datetime.datetime.now(mtree.time_zone)
-    try:
-        do_backup = mtree.next_backup_time < now
-    except TypeError:
-        ...
+    do_backup = mtree.next_backup_time < now
     if do_backup or force_backup:
         if not mtree.backup_not_in_progress.is_set():
             # During a backup, non-backup threads block until the backup is complete.
@@ -243,6 +257,51 @@ def progress_and_backup_in_thread(
                 dry_run=dry_run,
                 **db_kwargs,
             )
+
+        # if mtree.backup_not_in_progress.is_set():
+        #     # Clear the event and perform the backup. Calls to backup_not_in_progress.wait() will
+        #     # block until the backup is complete.
+        #     with mtree.backup_not_in_progress.backup_context():
+        #         global_iter = mtree.global_iteration.value()
+        #         mtree.logger.info(
+        #             f"Backup triggered in thread {thread_id} at global iteration {global_iter}."
+        #         )
+        #         save_metadata = iteration == 0
+        #         backup_results = backup_results and iteration != 0
+        #         _backup_in_thread(
+        #             mtree=mtree,
+        #             global_iter=global_iter,
+        #             backup_dir=backup_dir,
+        #             backup_every=backup_every,
+        #             n_tree_backups=n_tree_backups,
+        #             db_keyset=db_keyset,
+        #             db_backup_prefix=db_backup_prefix,
+        #             db_kwargs=db_kwargs,
+        #             backup_results=backup_results,
+        #             save_metadata=save_metadata,
+        #             dry_run=dry_run,
+        #             **db_kwargs,
+        #         )
+
+    # if skip_sync:
+    #     return
+
+    # # Regardless of backup, wait for all threads to reach this point before proceeding
+    # with mtree.thread_lock:
+    #     mtree.n_synced_threads += 1
+    #     if mtree.n_synced_threads == 1:
+    #         mtree.logger.info(
+    #             f"Syncing threads at iteration {iteration} in thread {thread_id}"
+    #         )
+    #         mtree.threads_are_synced.clear()
+    #     if mtree.n_synced_threads == mtree.threads:
+    #         mtree.logger.info(
+    #             f"All threads synced at iteration {iteration} in thread {thread_id}"
+    #         )
+    #         mtree.n_synced_threads = 0
+    #         mtree.threads_are_synced.set()
+
+    # mtree.threads_are_synced.wait()
 
 
 def _backup_in_thread(

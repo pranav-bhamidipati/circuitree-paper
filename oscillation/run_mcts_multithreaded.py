@@ -9,6 +9,7 @@ import gevent
 from oscillation_multithreaded import (
     MultithreadedOscillationTree,
     progress_and_backup_in_thread,
+    # progress_backup_and_sync,
 )
 
 
@@ -19,6 +20,7 @@ def main(
     n_steps_per_thread: int = 10_000,
     max_interactions: int = 12,
     callback_every: int = 1,
+    progress_every: int = 10,
     backup_every: int = 3600,
     n_tree_backups: int = 2,
     logger=None,
@@ -50,8 +52,10 @@ def main(
 
     if run_in_main_thread:
         callback = partial(
+            # progress_backup_and_sync,
             progress_and_backup_in_thread,
             backup_dir=backup_dir,
+            progress_every=1,
             backup_every=1,
             n_tree_backups=n_tree_backups,
             backup_results=True,
@@ -78,7 +82,9 @@ def main(
 
     else:
         callback = partial(
+            # progress_backup_and_sync,
             progress_and_backup_in_thread,
+            progress_every=progress_every,
             backup_dir=backup_dir,
             backup_every=backup_every,
             n_tree_backups=n_tree_backups,
@@ -105,7 +111,7 @@ def main(
         )
         print(finish_msg)
         mtree.logger.info(finish_msg)
-        callback(mtree=mtree, iteration=-1, force_backup=True)
+        callback(mtree=mtree, iteration=-1, force_backup=True, skip_sync=True)
 
 
 if __name__ == "__main__":
@@ -134,19 +140,22 @@ if __name__ == "__main__":
     logger.info("Running main() program.")
 
     main(
+        logger=logger,
         save_dir=save_dir,
+        max_interactions=12,
         backup_dir=backup_dir,
+        # threads=0,
+        # threads=2,
+        # threads=30,
+        threads=500,
+        n_steps_per_thread=20_000,
         # dry_run=True,
+        # progress_every=1,
+        progress_every=10,
         # backup_every=60,
         # backup_every=3600,
         backup_every=7200,
-        # threads=0,
-        # threads=30,
-        threads=500,
-        n_steps_per_thread=2_000,
-        max_interactions=12,
-        logger=logger,
-        # callback_every=1,
+        callback_every=10,
         # callback_every=10,
-        callback_every=20,
+        # callback_every=20,
     )
