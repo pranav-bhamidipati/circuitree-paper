@@ -36,13 +36,10 @@ def run_ssa_no_time_limit(
         autocorr_min, sim_time = json.loads(existing_entry)
         if (autocorr_min <= 0.0) and (sim_time >= 0.0):
             task_logger.info(
-                f"Entry already exists. Sleeping for 5s..."
-                )
-            sleep(5.0)
-            task_logger.info(f"Returning autocorr. min of {autocorr_min} "
+                f"Entry already exists. Returning autocorr. min of {autocorr_min} "
                 f"for {param_index=}, {state=}"
             )
-            return autocorr_min
+            return autocorr_min, (True, sim_time)
 
     # Use the parameter set corresponding to the visit number
     seed, prots0, params = json.loads(
@@ -84,7 +81,7 @@ def run_ssa_no_time_limit(
             prefix="osc_", param_index=param_index, autocorr_min=autocorr_min, **kwargs
         )
 
-    return autocorr_min
+    return autocorr_min, (False, sim_time)
 
 
 def _run_ssa(
