@@ -19,16 +19,21 @@ def main(
     database_url: str | Path = None,
     index_column: str = "param_index",
     table_name: str = "parameter_table",
+    extra_columns: list[str] = None,
 ):
+    if extra_columns is None:
+        extra_columns = []
+    n_extra_columns = len(extra_columns)
+
     print("Loading parameter sets")
     params_df = pd.read_csv(param_sets_csv, index_col=index_column)
 
     columns = params_df.columns
     ncol = len(columns)
-    if ncol != 1 + n_init_columns + n_parameters:
+    ncol_expected = 1 + n_init_columns + n_parameters + n_extra_columns
+    if ncol != ncol_expected:
         raise ValueError(
-            f"Expected dataframe with {n_init_columns + n_parameters} columns, "
-            f"not {ncol}."
+            f"Expected dataframe with {ncol_expected} columns, not {ncol}."
         )
     params_df = params_df.sort_index()
 
@@ -36,12 +41,22 @@ def main(
     database_url = database_url or app.conf["broker_url"]
     database: redis.Redis = redis.Redis.from_url(database_url)
 
-    # JSON-serialize each row as a [seed, prots0, params] tuple
-    chunk_sizes = (1, n_init_columns, n_parameters)
+    # JSON-serialize each row as a [seed, prots0, params[, extra_cols]] tuple
+    chunk_sizes = [1, n_init_columns, n_parameters]
     params_mapping = {}
-    for pidx, *row in params_df.itertuples():
-        (seed,), prots0, params = _split_seq_into_chunks(row, chunk_sizes)
-        params_mapping[str(pidx)] = json.dumps([seed, prots0, params])
+    if n_extra_columns > 0:
+        chunk_sizes.append(n_extra_columns)
+        for pidx, *row in params_df.itertuples():
+            (seed,), prots0, params, extra_data = _split_seq_into_chunks(
+                row, chunk_sizes
+            )
+            params_mapping[str(pidx)] = json.dumps([seed, prots0, params, extra_data])
+    else:
+        for pidx, *row in params_df.itertuples():
+            (seed,), prots0, params, *extra_data = _split_seq_into_chunks(
+                row, chunk_sizes
+            )
+            params_mapping[str(pidx)] = json.dumps([seed, prots0, params])
 
     # Store in database
     clear_before_storing = (
@@ -63,11 +78,14 @@ if __name__ == "__main__":
     param_sets_csv = Path(
         # "~/git/circuitree-paper/data/oscillation/param_sets_queue_10000.csv"
         # "~/git/circuitree-paper/data/oscillation/param_sets_queue_10000_5tf.csv"
-        "~/git/circuitree-paper/data/oscillation/231020_param_sets_10000_5tf.csv"
+        # "~/git/circuitree-paper/data/oscillation/231020_param_sets_10000_5tf.csv"
+        "~/git/circuitree-paper/data/oscillation"
+        "/231104_param_sets_10000_5tf_pmutation0.5.csv"
     ).expanduser()
 
     main(
         param_sets_csv=param_sets_csv,
         n_init_columns=5,
         n_parameters=10,
+        extra_columns=["component_mutation"],
     )

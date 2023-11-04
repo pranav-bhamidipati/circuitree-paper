@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Iterable
 import numpy as np
 from pathlib import Path
 import pandas as pd
@@ -15,12 +16,14 @@ from gillespie import (
 def main(
     n_samples: int,
     save_dir: Path,
-    n_components: int,
+    components: Iterable[str],
+    p_mutation: float = 0.0,
     seed: int = 2023,
     save: bool = False,
     suffix: str = "",
 ):
     n_params = len(SAMPLING_RANGES)
+    n_components = len(components)
 
     # Draw random seeds for each sample
     seed_seq = np.random.SeedSequence(seed)
@@ -39,12 +42,19 @@ def main(
 
     seed_data = pd.DataFrame({"prng_seed": prng_seeds})
     seed_data.index.name = "param_index"
-    init_columns = [f"{chr(ord('A') + i)}_0" for i in range(n_components)]
+    init_columns = [f"{c}_0" for c in components]
     init_data = pd.DataFrame(initial_conditions, columns=init_columns)
     init_data.index.name = "param_index"
     param_data = pd.DataFrame(param_sets, columns=PARAM_NAMES)
     param_data.index.name = "param_index"
     data = pd.concat([seed_data, init_data, param_data], axis=1)
+
+    if p_mutation > 0:
+        p_mutation = [1 - p_mutation] + [p_mutation / n_components] * n_components
+        component_mutations = rg.choice(
+            [None] + list(components), p=p_mutation, size=n_samples
+        )
+        data["component_mutation"] = component_mutations
 
     if save:
         today = datetime.now().strftime("%y%m%d")
@@ -61,8 +71,10 @@ if __name__ == "__main__":
         n_samples=10_000,
         save_dir=save_dir,
         save=True,
-        n_components=5,
-        suffix="_5tf",
+        components=list("ABCDE"),
+        suffix="_5tf_pmutation0.5",
+        p_mutation=0.5,
+        # suffix="_5tf",
         # n_components=3,
         # suffix="_3tf",
     )

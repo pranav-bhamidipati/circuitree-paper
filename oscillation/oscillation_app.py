@@ -42,9 +42,22 @@ def run_ssa_no_time_limit(
             return autocorr_min, (True, sim_time)
 
     # Use the parameter set corresponding to the visit number
-    seed, prots0, params = json.loads(
+    seed, prots0, params, (mutated_component,) = json.loads(
         database.hget("parameter_table", str(param_index))
     )
+
+    # Remove the mutated component from the state string
+    if mutated_component is not None:
+        components, interactions_joined = state.strip("*").split("::")
+        components = components.replace(mutated_component, "")
+        interactions = [
+            ixn
+            for ixn in interactions_joined.split("_")
+            if mutated_component not in ixn[:2]
+        ]
+        interactions_joined = "_".join(interactions)
+        state = f"*{components}::{interactions_joined}"
+
     kwargs = dict(
         seed=seed,
         prots0=prots0,

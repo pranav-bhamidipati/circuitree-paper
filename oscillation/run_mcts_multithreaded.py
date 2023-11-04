@@ -7,6 +7,7 @@ from pathlib import Path
 import gevent
 
 from oscillation_multithreaded import (
+    BatchedOscillationTree,
     MultithreadedOscillationTree,
     progress_and_backup_in_thread,
     # progress_backup_and_sync,
@@ -17,12 +18,14 @@ def main(
     save_dir: Path,
     backup_dir: Optional[Path] = None,
     threads: int = 16,
+    batch_size: int = 1,
     n_steps_per_thread: int = 10_000,
     max_interactions: int = 12,
+    exploration_constant: Optional[float] = None,
     callback_every: int = 1,
     progress_every: int = 10,
     backup_every: int = 3600,
-    n_tree_backups: int = 2,
+    n_tree_backups: int = 1000,
     logger=None,
     dry_run: bool = False,
 ):
@@ -37,14 +40,16 @@ def main(
         components=["A", "B", "C", "D", "E"],
         interactions=["activates", "inhibits"],
         max_interactions=max_interactions,
+        exploration_constant=exploration_constant,
         dt=20.0,  # seconds
         nt=2000,
         save_dir=save_dir,
         threads=threads,
         logger=logger,
+        batch_size=batch_size,
     )
 
-    mtree = MultithreadedOscillationTree(**mtree_kw)
+    mtree = BatchedOscillationTree(**mtree_kw)
 
     print(f"Making a search tree with {threads} search threads.")
     print(f"Saving results to {save_dir}")
@@ -118,9 +123,16 @@ if __name__ == "__main__":
     from datetime import datetime
     import logging
 
+    batch_size = 1
+
+    # Default is sqrt(2)
+    exploration_constant = 2.0
+
     now = datetime.now().strftime("%y%m%d-%H-%M-%S")
     save_dir = Path(
-        f"~/git/circuitree-paper/data/oscillation/mcts/{now}_5tf_lockfree"
+        f"~/git/circuitree-paper/data/oscillation/mcts/"
+        f"{now}_5tf_lockfree_batchsize{batch_size}"
+        f"_exploration{exploration_constant:.3f}"
     ).expanduser()
     save_dir.mkdir()
     backup_dir = save_dir.joinpath("backups")
@@ -144,11 +156,13 @@ if __name__ == "__main__":
         save_dir=save_dir,
         max_interactions=12,
         backup_dir=backup_dir,
+        batch_size=batch_size,
+        exploration_constant=exploration_constant,
         # threads=0,
         # threads=2,
         # threads=30,
         threads=500,
-        n_steps_per_thread=20_000,
+        n_steps_per_thread=5_000,
         # dry_run=True,
         # progress_every=1,
         progress_every=10,

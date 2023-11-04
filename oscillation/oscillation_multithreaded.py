@@ -3,8 +3,9 @@ from gevent import monkey
 monkey.patch_all()
 
 from time import perf_counter
-from gevent import getcurrent
+from gevent import getcurrent, sleep
 from gevent.event import Event
+
 # from gevent.lock import RLock
 from gevent.queue import Queue
 from itertools import count
@@ -13,7 +14,7 @@ import numpy as np
 from pathlib import Path
 import redis
 import sys
-from typing import Optional
+from typing import Hashable, Optional
 import datetime
 from uuid import uuid4
 
@@ -21,6 +22,13 @@ from circuitree.parallel import ParallelNetworkTree
 from redis_backup import main as backup_database
 
 from oscillation_app import database, app, task_logger, run_ssa_no_time_limit
+
+
+### Define some helpful primitives for multithreading ###
+
+
+class ExhaustionError(RuntimeError):
+    """Raised when the entire search tree is exhaustively sampled."""
 
 
 class BackupContextManager:
@@ -66,7 +74,12 @@ class AtomicCounter:
         return next(self._incs) - next(self._accesses)
 
 
+### Define the multithreaded MCTS search tree and its batched counterpart ###
+
+
 class MultithreadedOscillationTree(ParallelNetworkTree):
+    """Run CircuiTree with a lock-free parallel implementation of the MCTS algorithm."""
+
     def __init__(
         self,
         *,
@@ -85,18 +98,13 @@ class MultithreadedOscillationTree(ParallelNetworkTree):
     ):
         super().__init__(**kwargs)
 
+        self.tree_id = str(uuid4())
+
         self.autocorr_threshold = autocorr_threshold
         self.dt = dt
         self.nt = nt
         self.nchunks = nchunks
         self.success_threshold = success_threshold
-
-        self.tree_id = str(uuid4())
-
-        # self.n_synced_threads = 0
-        # self.threads_are_synced = Event()
-        # self.threads_are_synced.set()
-        # self.thread_lock = RLock()
 
         self.backup_not_in_progress = ManagedEvent()
         self.backup_not_in_progress.set()
@@ -127,9 +135,6 @@ class MultithreadedOscillationTree(ParallelNetworkTree):
                 "save_dir",
                 "logger",
                 "database",
-                # "n_synced_threads",
-                # "threads_are_synced",
-                # "thread_lock",
                 "backup_not_in_progress",
                 "last_backed_up_iteration",
                 "global_iteration",
@@ -148,6 +153,90 @@ class MultithreadedOscillationTree(ParallelNetworkTree):
             autocorr_threshold=self.autocorr_threshold,
             save_dir=self.save_dir,
         )
+
+    def select_and_expand(
+        self, rg: Optional[np.random.Generator] = None
+    ) -> list[Hashable]:
+        rg = self.rg if rg is None else rg
+
+        # Start at root
+        node = self.root
+        selection_path = [node]
+        actions = self.grammar.get_actions(node)
+
+        # Select the child with the highest UCB score until you reach a terminal
+        # state or an unexpanded edge
+        while actions:
+            max_ucb = -np.inf
+            best_child = None
+            rg.shuffle(actions)
+            for action in actions:
+                child = self._do_action(node, action)
+
+                # Skip this child if it has been exhausted (i.e. all of its terminal
+                # descendants have been expanded and simulated exhaustively)
+                if self.graph.nodes[child].get("is_exhausted", False):
+                    continue
+
+                ucb = self.get_ucb_score(node, child)
+
+                # An unexpanded edge has UCB score of infinity.
+                # In this case, expand and select the child.
+                if ucb == np.inf:
+                    self.expand_edge(node, child)
+                    selection_path.append(child)
+                    return selection_path
+
+                # Otherwise, track the child with the highest UCB score
+                if ucb > max_ucb:
+                    max_ucb = ucb
+                    best_child = child
+
+            node = best_child
+            selection_path.append(node)
+            actions = self.grammar.get_actions(node)
+
+        # If the loop breaks, we have reached a terminal state.
+
+        # Check for exhaustion. A terminal state can become exhausted if it has been
+        # simulated enough times to have sampled all parameter sets.
+        if self.graph.nodes[node].get("visits", 0) >= self.n_param_sets - 1:
+            self.mark_as_exhausted(node)
+
+        return selection_path
+
+    def mark_as_exhausted(self, node: str) -> None:
+        """Mark a terminal node as exhausted. Its parent nodes will be modified to
+        forget results from this node (i.e. the visits are decremented and the reward
+        is subtracted from the total reward). If all nodes of the parent are exhausted,
+        the parent is also marked as exhausted - this is done recursively up the tree.
+        """
+        self.logger.info(f"Marking node {node} as exhausted.")
+        self.graph.nodes[node]["is_exhausted"] = True
+
+        # If the whole tree is exhausted, we are done
+        if node == self.root:
+            self.logger.info(
+                "Every node in the tree has been visited to exhaustion. Exiting."
+            )
+            raise ExhaustionError(
+                "Every node in the tree has been visited to exhaustion."
+            )
+
+        # Forget results from this node
+        for parent in self.graph.predecessors(node):
+            edge_visits = self.graph.edges[parent, node]["visits"]
+            edge_reward = self.graph.edges[parent, node]["reward"]
+            self.graph.nodes[parent]["visits"] -= edge_visits
+            self.graph.nodes[parent]["reward"] -= edge_reward
+
+        # Recursively mark parent nodes as exhausted
+        for parent in self.graph.predecessors(node):
+            if all(
+                self.graph.nodes[c].get("is_exhausted", False)
+                for c in self.graph.successors(parent)
+            ):
+                self.mark_as_exhausted(parent)
 
     def get_param_set_index(self, state: str, visit: int) -> int:
         """Get the index of the parameter set to use for this state and visit number."""
@@ -170,7 +259,7 @@ class MultithreadedOscillationTree(ParallelNetworkTree):
         self.global_iteration.increment()
 
         # Wait for the simulation to complete
-        autocorr_min = task.get()
+        autocorr_min, (result_was_cached, simulation_time) = task.get()
         reward = float(-autocorr_min > self.autocorr_threshold)
 
         # Don't backpropagate until a running backup is complete. Most thread-time is
@@ -183,6 +272,92 @@ class MultithreadedOscillationTree(ParallelNetworkTree):
         )
         self.result_history.put((state, reward))
         return reward
+
+
+class BatchedOscillationTree(MultithreadedOscillationTree):
+    """Run multiple simulations at each visit, backpropagating the incremental
+    (average) reward."""
+
+    def __init__(self, *, batch_size: int = 1, **kwargs):
+        super().__init__(**kwargs)
+        self.batch_size = batch_size
+
+    def traverse(self, thread_idx: int, **kwargs):
+        """Select a node, simulate a trajectory, and backpropagate the result.
+        Performs a single iteration of the MCTS algorithm, with multiple simulations
+        in parallel per iteration."""
+        # Select the next state to sample and the terminal state to be simulated.
+        # Expands a child if possible.
+        rg = self._random_generators[thread_idx]
+        selection_path = self.select_and_expand(rg=rg)
+
+        # Between backpropagation of visit and reward, we incur virtual loss
+        self.backpropagate_visit(selection_path)
+
+        # Simulate multiple trajectories from the selected state. The parameter
+        # set for each trajectory is selected by shuffling the parameter set indices
+        # in a manner unique to each state.
+        selected_state = selection_path[-1]
+        sim_nodes_and_param_indices = []
+        for _ in range(self.batch_size):
+            sim_node = self.get_random_terminal_descendant(selected_state, rg=rg)
+            sample_number = self.sample_counter[sim_node]
+            self.sample_counter[sim_node] += 1
+            param_idx = self.get_param_set_index(sim_node, sample_number)
+            sim_nodes_and_param_indices.append((sim_node, param_idx))
+
+        # Submit all simulations to the Celery task queue
+        self.logger.info(
+            f"Getting reward for {self.batch_size} simulations of {selected_state=}"
+        )
+        tasks: list[AsyncResult] = []
+        for sim_node, param_idx in sim_nodes_and_param_indices:
+            task: AsyncResult = run_ssa_no_time_limit.apply_async(
+                args=(sim_node, int(param_idx)), kwargs=self.sim_kwargs, **kwargs
+            )
+            tasks.append((sim_node, task))
+
+        # As tasks complete, backpropagate the updated reward
+        rewards = []
+        while tasks:
+            sleep(0.1)
+            completed_tasks = [(s, t) for s, t in tasks if t.ready()]
+            for simulated_state, task in completed_tasks:
+                # Get task result
+                autocorr_min, (result_was_cached, simulation_time) = task.get()
+
+                # # If the result was cached, sleep for the duration of simulation time.
+                # # This is to ensure that non-cached and cached results take the same amount
+                # # of time to complete. Otherwise, MCTS will preferentially select cached
+                # # results, which will bias the search.
+                # if result_was_cached:
+                #     self.logger.info(
+                #         f"Result was cached. Sleeping for {simulation_time:.2f}s."
+                #     )
+                #     sleep(simulation_time)
+
+                reward = float(-autocorr_min > self.autocorr_threshold)
+                rewards.append(reward)
+
+                # Don't backpropagate until a running backup has completed
+                self.backup_not_in_progress.wait()
+                self.logger.info(
+                    f"Autocorr. min. of {autocorr_min:.4f} for {simulated_state=} "
+                    f"Oscillating? {bool(reward)}."
+                )
+
+                # Backpropagate a fraction of the reward
+                self.result_history.put((selected_state, reward))
+                self.backpropagate_reward(selection_path, reward / self.batch_size)
+
+                # Remove the task from the to-do list
+                tasks.remove((simulated_state, task))
+
+        # Keep track of the total number of iterations performed
+        self.backup_not_in_progress.wait()
+        self.global_iteration.increment()
+
+        return selection_path, reward, sim_node
 
 
 def progress_callback_in_thread(
