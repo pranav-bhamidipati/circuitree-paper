@@ -175,7 +175,9 @@ class MultithreadedOscillationTree(ParallelNetworkTree):
 
                 # Skip this child if it has been exhausted (i.e. all of its terminal
                 # descendants have been expanded and simulated exhaustively)
-                if self.graph.nodes[child].get("is_exhausted", False):
+                if child in self.graph.nodes and self.graph.nodes[child].get(
+                    "is_exhausted", False
+                ):
                     continue
 
                 ucb = self.get_ucb_score(node, child)
