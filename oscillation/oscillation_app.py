@@ -27,7 +27,7 @@ def run_ssa_no_time_limit(
     nchunks: int,
     autocorr_threshold: float,
     save_dir: str,
-) -> float:
+) -> tuple[float, tuple[bool, float]]:
     task_logger.info(f"Received {param_index=}, {state=}")
     state_key = "state_" + state.strip("*")
     existing_entry = database.hget(state_key, str(param_index))
@@ -56,7 +56,10 @@ def run_ssa_no_time_limit(
             if mutated_component not in ixn[:2]
         ]
         interactions_joined = "_".join(interactions)
-        state = f"*{components}::{interactions_joined}"
+        new_state = f"*{components}::{interactions_joined}"
+        task_logger.info(
+            f"Removing component {mutated_component}:  {state} -> {new_state}"
+        )
 
     kwargs = dict(
         seed=seed,
