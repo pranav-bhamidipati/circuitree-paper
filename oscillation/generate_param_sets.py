@@ -52,7 +52,7 @@ def main(
     if p_mutation > 0:
         p_mutation = [1 - p_mutation] + [p_mutation / n_components] * n_components
         component_mutations = rg.choice(
-            [None] + list(components), p=p_mutation, size=n_samples
+            ["(none)"] + list(components), p=p_mutation, size=n_samples
         )
         data["component_mutation"] = component_mutations
 

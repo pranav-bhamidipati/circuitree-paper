@@ -47,7 +47,7 @@ def run_ssa_no_time_limit(
     )
 
     # Remove the mutated component from the state string
-    if mutated_component is not None:
+    if mutated_component != "(none)":
         components, interactions_joined = state.strip("*").split("::")
         components = components.replace(mutated_component, "")
         interactions = [
