@@ -1,6 +1,6 @@
 from functools import partial
 from typing import Optional
-from oscillation_local_celery import OscillationTreeCeleryLocal
+from old_scripts.oscillation_local_celery import OscillationTreeCeleryLocal
 from pathlib import Path
 from multiprocessing import Pool
 

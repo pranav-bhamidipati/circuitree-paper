@@ -109,7 +109,7 @@ class OscillationTreeParallel(OscillationTree, ParallelTree):
         # Add rewards to the transposition table
         self.ttable[model.genotype].extend(list(rewards))
 
-        successes = np.array(rewards) > self.autocorr_threshold
+        successes = np.array(rewards) > self.ACF_threshold
         if successes.any():
             # Save data for successful visits
             self.save_simulation_data(
@@ -184,9 +184,9 @@ class OscillationTreeParallel(OscillationTree, ParallelTree):
         elif nan_rewards.any():
             if self.warn_if_nan:
                 warnings.warn(f"Found NaN rewards in batch.")
-            reward = np.mean(rewards[~nan_rewards] > self.autocorr_threshold)
+            reward = np.mean(rewards[~nan_rewards] > self.ACF_threshold)
         else:
-            reward = np.mean(rewards > self.autocorr_threshold)
+            reward = np.mean(rewards > self.ACF_threshold)
 
         self._done_callback(
             self, state, list(range(visit, visit + self.batch_size)), rewards.tolist()
@@ -210,7 +210,7 @@ class OscillationTreeParallel(OscillationTree, ParallelTree):
             visits=visits,
             rewards=rewards,
             y_t=y_t,
-            autocorr_threshold=self.autocorr_threshold,
+            autocorr_threshold=self.ACF_threshold,
             save_dir=self.save_dir,
             prefix=prefix,
             **kwargs,

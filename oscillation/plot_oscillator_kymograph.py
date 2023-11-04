@@ -8,11 +8,16 @@ import networkx as nx
 import numpy as np
 import pandas as pd
 import seaborn as sns
+import warnings
 
 from scipy.sparse import csr_matrix
+from tqdm import tqdm
+from graph_utils import compute_Q_tilde
+
+from oscillation import OscillationTree
 
 
-def get_depth(state: str) -> int:
+def get_complexity(state: str) -> int:
     _, interactions_joined = state.split("::")
     if interactions_joined:
         return interactions_joined.count("_") + 1
@@ -28,108 +33,197 @@ def get_Qval(state: str, graph: nx.DiGraph) -> float:
 
 
 def main(
+    results_csv: Path,
     data_dir: Path,
-    figsize: tuple[float, float] = (5, 5),
+    Qthresh: float = 0.01,
+    step_max: Optional[int] = None,
+    figsize: tuple[float, float] = (5, 4),
     save: bool = False,
     save_dir: Optional[Path] = None,
-    root_node: str = "ABC::",
     fmt: str = "png",
     dpi: int = 300,
 ):
-    # Load in the visited states
-    #   - they are stored in txt files, one per chunk
-    #   - sort the txt files by extracting the step number
-    #   - store the max step number
-    #   - concat to make a long dataframe with columns for step #, name, and chunk #
-    #   - aggregate by chunk #, making a new column for the fraction of samples for each terminal
+    # Get which states are oscillators
+    results_df = pd.read_csv(results_csv, index_col=0)
+    results_df["complexity"] = results_df["state"].map(get_complexity)
+    results_df = results_df.sort_values(
+        ["complexity", "p_oscillation"], ascending=(True, False)
+    )
+    results_df["rank"] = results_df["p_oscillation"].rank(ascending=False).astype(int)
+    states = results_df["state"].copy()
+    results_df = results_df.reset_index(drop=True)
+    # results_df = results_df.loc[results_df["p_oscillation"] >= Qthresh]
+    oscillators = results_df.loc[results_df["p_oscillation"] >= Qthresh]["state"]
 
     # Load sampling data
-    csv_to_step = {}
-    for csv in Path(data_dir).glob("*samples.csv"):
+    replicate_dirs = [d for d in data_dir.glob("*") if d.is_dir()]
+    n_replicates = len(replicate_dirs)
+
+    unique_steps = set()
+    for csv in Path(data_dir).glob("*/*_oscillators.csv"):
         step = int(csv.name.split("_")[-2])
-        csv_to_step[csv] = step
-    csvs = sorted(csv_to_step, key=csv_to_step.get)
+        unique_steps.add(step)
+    steps = np.array(sorted(unique_steps))
+    if step_max is None:
+        step_max = steps[-1]
+    where_step_max = np.searchsorted(steps, step_max, side="right")
+    n_steps = len(steps)
 
-    # Load search graph
-    last_step = max(csv_to_step.values())
-    gml = next(data_dir.glob(f"*{last_step}_tree.gml"))
-    search_graph = nx.read_gml(gml)
+    # Count the replicates that classified each state as an oscillator at each step
+    state_found = np.zeros((n_replicates, n_steps, len(states)), dtype=bool)
+    for i, replicate_dir in enumerate(tqdm(replicate_dirs, desc="Loading replicates")):
+        for j, step in enumerate(steps):
+            csv = next(replicate_dir.glob(f"*_{step}_oscillators.csv"))
+            sample_df = pd.read_csv(csv)
+            where_osc = states.isin(sample_df["state"].loc[sample_df["Q"] >= Qthresh])
+            state_found[i, j] = where_osc
 
-    # Build a dataframe of states and their number of samples in each chunk of time-steps
-    dfs = []
-    for i, (csv, step) in enumerate(csv_to_step.items()):
-        sample_counter = Counter(pd.read_csv(csv, names=["state"])["state"].tolist())
-        # n_steps = sample_counter.total()
-        df = pd.DataFrame(
-            {
-                "state": sample_counter.keys(),
-                "n_samples": sample_counter.values(),
-                "step": step,
-                "chunk": i,
-            }
+    osc_found = state_found[:, :, oscillators.index]
+    p_reps_with_osc = osc_found.mean(axis=0).T
+    osc_df = pd.DataFrame(p_reps_with_osc, index=oscillators, columns=steps)
+    osc_df.index.name = "oscillator"
+    osc_df.columns.name = "sampling_time"
+
+    # n_plot = 20
+    # results_df = results_df.loc[results_df["p_oscillation"] >= Qthresh]
+    # results_df = results_df.set_index("state")
+    # selected_oscs = results_df.loc[results_df["complexity"] == 6].sort_values("rank")
+    # selected_oscs = selected_oscs.head(n_plot)
+
+    sampled_step = steps[-1]
+    p_reps_with_state = state_found.mean(axis=0)[-1]
+    # results_df = results_df.set_index("state")
+    fraction_df = pd.DataFrame(
+        dict(
+            state=results_df["state"],
+            fraction=p_reps_with_state,
+            complexity=results_df["complexity"],
+            Q=results_df["p_oscillation"],
         )
-        dfs.append(df)
-    data = pd.concat(dfs)
-
-    # Extract the name, depth, and Q value of terminal nodes from the search graph
-    #   - Get the search graph at the last step number
-    #   - Load the graph with nx.read_gml
-    #   - Iterate over nodes with enumerate(bfs_layers) and store the name, depth, and Q
-    #   - Make the state column a pd.Categorical ordered by depth, then Q
-    unique_states = data["state"].unique()
-    depths = {}
-    Qvals = {}
-    for state in unique_states:
-        Qval = get_Qval(state, search_graph)
-        if Qval < 0.01:
-            continue
-        depth = get_depth(state)
-        depths[state] = depth
-        Qvals[state] = Qval
-
-    data = data.loc[data["state"].isin(Qvals)]
-
-    data["depth"] = data["state"].map(depths)
-    data["Q"] = data["state"].map(Qvals)
-
-    argsort_states = np.lexsort(
-        [
-            -np.array(list(depths.values()), dtype=int),
-            np.array(list(Qvals.values()), dtype=float),
-        ]
     )
-    state_ordering = dict(zip(depths.keys(), argsort_states))
-    data["order"] = data["state"].map(state_ordering)
-    data = data.sort_values(["chunk", "order"])
+    # fraction_df = fraction_df.loc[results_df["complexity"] == 6]
 
-    samples_2d = csr_matrix(
-        (data["n_samples"].values, (data["order"].values, data["chunk"].values))
-    ).toarray()
+    warnings.filterwarnings("ignore", category=FutureWarning)
 
-    # plot_data = sample_data.pivot(index="step", columns="state", values="n_samples")
+    ### Plot % of replicates that classified each state as an oscillator vs. Q
+    fig, ax = plt.subplots(figsize=figsize)
+    plt.title(r"P(Labeled oscillator)")
+    # palette = sns.color_palette("husl", n_colors=fraction_df["complexity"].nunique())
+    palette = sns.color_palette(
+        "turbo_r", n_colors=fraction_df["complexity"].nunique(), desat=0.8
+    )
+    sns.scatterplot(
+        # data=fraction_df.loc[fraction_df["fraction"] > 0],
+        data=fraction_df,
+        x="Q",
+        y="fraction",
+        edgecolor="none",
+        palette=palette,
+        hue="complexity",
+        legend="full",
+        # alpha=0.5,
+        s=10,
+    )
+    # Move the legend outside the plot, adding a title "Complexity"
+    plt.legend(bbox_to_anchor=(1.05, 1), loc=2, borderaxespad=0.0, title="Complexity")
 
-    # Plot a kymograph of sampling
-    #   - x-axis is sampling time, y-axis is terminal node
-    #   - cmap is the fraction of samples going to that node
-    fig = plt.figure(figsize=figsize)
+    # Plot a dashed line showing the threshold for Q
+    plt.axvline(Qthresh, color="gray", ls="--", lw=0.5)
+    plt.text(
+        Qthresh * 0.85,
+        0.8,
+        r"$Q_\mathrm{thresh}$",
+        ha="right",
+        va="center",
+        color="gray",
+        fontsize="small",
+    )
 
-    hmap = sns.heatmap(data=samples_2d, vmin=0.0)
+    sns.despine()
+
+    plt.xlabel(r"$Q$")
+    plt.xscale("log")
+
+    plt.ylabel(r"$P(\hat{Q} > 0.01)$")
+    # plt.yscale("log")
+
+    plt.tight_layout()
 
     if save:
         today = datetime.today().strftime("%y%m%d")
-        fpath = Path(save_dir).joinpath(f"{today}_sampling_kymograph.{fmt}")
+        fpath = Path(save_dir).joinpath(f"{today}_logP_discovery_vs_Q.{fmt}")
         print(f"Writing to: {fpath.resolve().absolute()}")
         plt.savefig(fpath, dpi=dpi)
 
-    ...
+    # Plot a kymograph of oscillators discovered over time
+    #   - x-axis is sampling time, y-axis is oscillator
+    #   - cmap is the fraction of replicates that found that node
+    results_df = results_df.loc[results_df["p_oscillation"] >= Qthresh]
+
+    fig = plt.figure(figsize=figsize)
+    plt.title("Oscillators discovered during sampling")
+
+    hmap = sns.heatmap(
+        data=p_reps_with_osc[:, :where_step_max],
+        vmin=0,
+        vmax=1,
+        cmap="viridis",
+        cbar_kws={"label": f"P(Discovery), n={n_replicates}"},
+    )
+
+    # Plot a horizontal line between each level of complexity
+    results_df["last_of_level"] = results_df["complexity"].diff().fillna(0) != 0
+    where_complexity_changes = np.where(results_df["last_of_level"])[0]
+    complexities = []
+    y_complexities = []
+    for idx in where_complexity_changes:
+        hmap.axhline(idx, color="white", lw=0.5, ls="--")
+        cpx = results_df.iloc[idx]["complexity"]
+        y_cpx = np.where(results_df["complexity"] == cpx)[0].mean()
+        complexities.append(cpx)
+        y_complexities.append(y_cpx)
+
+    # Use fewer ticks on the x-axis
+    # plt.xlabel(r"Sampling time ($10^3$ iterations)")
+    plt.xlabel(r"$N$ ($10^3$ iterations)")
+    xtick_idx = np.linspace(0, where_step_max, 11).astype(int)[1:] - 1
+    xticklabels = [f"{steps[idx] // 1000}" for idx in xtick_idx]
+    hmap.set_xticks(xtick_idx + 0.5)
+    hmap.set_xticklabels(xticklabels)
+
+    # Remove y ticks and add labels for each complexity at the mean y position
+    plt.ylabel("Complexity (# interactions)")
+    hmap.set_yticks(y_complexities)
+    hmap.set_yticklabels(complexities)
+
+    plt.tight_layout()
+
+    if save:
+        today = datetime.today().strftime("%y%m%d")
+        fpath = Path(save_dir).joinpath(f"{today}_oscillator_kymograph.{fmt}")
+        print(f"Writing to: {fpath.resolve().absolute()}")
+        plt.savefig(fpath, dpi=dpi)
 
 
 if __name__ == "__main__":
-    data_dir = Path("data/oscillation/mcts/mcts_bootstrap_short_231013_175157/0")
+    # results_csv = Path("data/oscillation/230717_motifs.csv")
+    results_csv = Path("data/oscillation/231102_exhaustive_results.csv")
+
+    # data_dir = Path("data/oscillation/mcts/mcts_bootstrap_short_231020_175449")
+    # step_max = 50_000
+
+    data_dir = Path(
+        "data/oscillation/mcts/mcts_bootstrap_short_exploration2.00_231103_140501"
+    )
+    step_max = 100_000
+
     save_dir = Path("figures/oscillation")
 
     main(
+        results_csv=results_csv,
         data_dir=data_dir,
+        step_max=step_max,
         save=True,
         save_dir=save_dir,
+        # fmt="pdf",
     )

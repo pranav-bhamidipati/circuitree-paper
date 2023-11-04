@@ -147,7 +147,8 @@ def run_search(
     log_dir: Path,
     n_steps: int,
     save_every: int,
-    oscillator_table_csv: Path,
+    exhaustive_results_csv: Path,
+    exploration_constant: Optional[float] = None,
     state_col: str = "state",
     Q_col: str = "p_oscillation",
     Q_threshold: float = 0.01,
@@ -175,14 +176,15 @@ def run_search(
     )
 
     logger.info(
-        f"Loading table of 3-TF oscillator search results from {oscillator_table_csv}"
+        f"Loading table of 3-TF oscillator search results from {exhaustive_results_csv}"
     )
-    oscillator_table = pd.read_csv(oscillator_table_csv, index_col=0)
+    exhaustive_results_table = pd.read_csv(exhaustive_results_csv, index_col=0)
 
     save_dir = Path(save_dir)
     save_dir.mkdir(exist_ok=True)
     ot = BootstrapOscillationTree(
-        table=oscillator_table,
+        exploration_constant=exploration_constant,
+        table=exhaustive_results_table,
         seed=tree_seed,
         state_col=state_col,
         Q_col=Q_col,
@@ -200,13 +202,14 @@ def run_search(
 
 
 def main(
-    oscillator_table_csv: Path,
+    exhaustive_results_csv: Path,
     save_dir: Path,
     log_dir: Path,
     n_steps: int,
     save_every: int,
     n_replicates: int,
     master_seed: int,
+    exploration_constant: Optional[float] = None,
     progress_bar: bool = True,
     n_workers: Optional[int] = None,
     state_col: str = "state",
@@ -224,7 +227,8 @@ def main(
         n_steps=n_steps,
         save_every=save_every,
         log_dir=log_dir,
-        oscillator_table_csv=oscillator_table_csv,
+        exploration_constant=exploration_constant,
+        exhaustive_results_csv=exhaustive_results_csv,
         state_col=state_col,
         Q_col=Q_col,
         Q_threshold=Q_threshold,
@@ -258,12 +262,21 @@ def main(
 if __name__ == "__main__":
     from datetime import datetime
 
+    # default is sqrt(2)
+    exploration_constant = 2.0
+
     now = datetime.now().strftime("%y%m%d_%H%M%S")
 
-    oscillation_table_csv = Path("data/oscillation/230717_motifs.csv")
+    exhaustive_results_csv = Path("data/oscillation/230717_motifs.csv")
 
-    save_dir = Path(f"data/oscillation/mcts/mcts_bootstrap_short_{now}")
-    log_dir = Path(f"logs/oscillation/mcts/mcts_bootstrap_short_{now}")
+    save_dir = Path(
+        f"data/oscillation/mcts/mcts_bootstrap_short"
+        f"_exploration{exploration_constant:.2f}_{now}"
+    )
+    log_dir = Path(
+        f"logs/oscillation/mcts/mcts_bootstrap_short"
+        f"_exploration{exploration_constant:.2f}_{now}"
+    )
 
     # save_dir = Path(f"data/oscillation/mcts/mcts_bootstrap_long_{now}")
     # log_dir = Path(f"logs/oscillation/mcts/mcts_bootstrap_long_{now}")
@@ -274,13 +287,15 @@ if __name__ == "__main__":
     main(
         save_dir=save_dir,
         log_dir=log_dir,
-        oscillator_table_csv=oscillation_table_csv,
-        # n_workers=1,
-        n_workers=13,
-        n_replicates=50,
+        exhaustive_results_csv=exhaustive_results_csv,
+        exploration_constant=exploration_constant,
         master_seed=2023,
+        # n_workers=1,
+        n_workers=12,
+        n_replicates=50,
         n_steps=100_000,
         save_every=1_000,
+        # n_replicates=12,
         # n_steps=5_000_000,
         # save_every=100_000,
     )

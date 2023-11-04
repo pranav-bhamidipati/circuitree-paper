@@ -41,7 +41,7 @@ class OscillationTree(SimpleNetworkTree):
     def is_success(self, state: str) -> bool:
         reward = self.graph.nodes[state]["reward"]
         visits = self.graph.nodes[state]["visits"]
-        return visits > 0 and reward / visits > self.Q_threshold
+        return visits > 0 and reward / visits >= self.Q_threshold
 
     def get_reward(
         self,

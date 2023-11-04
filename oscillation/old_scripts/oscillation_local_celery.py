@@ -394,9 +394,9 @@ class OscillationTreeCeleryLocal(OscillationTree, ParallelTree):
             reward = self.get_reward(state)
         elif nan_rewards.any():
             self.logger.warning(f"Found NaN rewards in batch.")
-            reward = np.mean(-autocorr_mins[~nan_rewards] > self.autocorr_threshold)
+            reward = np.mean(-autocorr_mins[~nan_rewards] > self.ACF_threshold)
         else:
-            reward = np.mean(-autocorr_mins > self.autocorr_threshold)
+            reward = np.mean(-autocorr_mins > self.ACF_threshold)
 
         self.iteration_counter += 1
         if self.iteration_counter % self.callback_every == 0:

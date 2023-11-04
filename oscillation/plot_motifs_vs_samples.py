@@ -54,10 +54,31 @@ def main(
 
 
 if __name__ == "__main__":
+    bins = 100
+    # data_csv = Path(
+    #     "data/oscillation/mcts/mcts_bootstrap_short_231002_221756"
+    #     "/231003_motif_counts.csv"
+    # )
+    # data_csv = Path(
+    #     "data/oscillation/mcts/mcts_bootstrap_short_231020_175449"
+    #     "/231102_motif_counts.csv"
+    # )
+    # data_csv = Path(
+    #     "data/oscillation/mcts/mcts_bootstrap_short_231102_111706"
+    #     "/231102_motif_counts.csv"
+    # )
     data_csv = Path(
-        "data/oscillation/mcts/mcts_bootstrap_short_231002_221756"
-        "/231003_motif_counts.csv"
-    ).expanduser()
+        "data/oscillation/mcts/mcts_bootstrap_short_exploration2.00_231103_140501"
+        "/231103_motif_counts.csv"
+    )
+
+    # bins = 50
+    # data_csv = Path(
+    #     "data/oscillation/mcts/mcts_bootstrap_long_231022_173227"
+    #     "/231102_motif_counts.csv"
+    # )
+
+    # names = ["(none)", "AI", "Rep", "AI+Rep"]
 
     save_dir = Path("figures/oscillation/")
 
@@ -65,8 +86,8 @@ if __name__ == "__main__":
         data_csv=data_csv,
         save=True,
         save_dir=save_dir,
-        fmt="pdf",
-        # bins=100,
+        # fmt="pdf",
+        bins=bins,
         palette="deep",
-        legend_title="NFR combination",
+        legend_title="Motifs",
     )

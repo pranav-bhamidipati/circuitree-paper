@@ -54,7 +54,14 @@ def main(
             step = int(f.stem.split(delim)[which_in_split])
             replicates.append(i)
             steps.append(step)
-            step_samples = pd.read_csv(f, header=None).iloc[:, 0].to_list()
+            sample_df = pd.read_csv(f)
+            if "selected_node" in sample_df.columns:
+                # Get the selected node at each step
+                step_samples = sample_df["selected_node"].values
+            else:
+                # Remove header and read the first column as a list of selected states
+                step_samples = sample_df.iloc[1:, 0].to_list()
+
             n_motifs_sampled_at_step = _get_n_motifs_present(
                 step_samples, motif_combination_strings, grammar
             )
@@ -78,10 +85,16 @@ def main(
 
 
 if __name__ == "__main__":
-    results_dir = Path("data/oscillation/mcts/mcts_bootstrap_short_231002_221756")
+    # results_dir = Path("data/oscillation/mcts/mcts_bootstrap_short_231020_175449")
+    # results_dir = Path("data/oscillation/mcts/mcts_bootstrap_short_231102_111706")
+    # results_dir = Path("data/oscillation/mcts/mcts_bootstrap_long_231022_173227")
+    results_dir = Path(
+        "data/oscillation/mcts/mcts_bootstrap_short_exploration2.00_231103_140501"
+    )
+
     save_dir = results_dir
 
-    motifs = {"AI": "ABa_BAi", "AAI": "ABa_BCa_CAi", "III": "ABi_BCi_CAi"}
+    motifs = {"AI": "ABa_BAi", "III": "ABi_BCi_CAi"}
 
     main(
         results_dir=results_dir,

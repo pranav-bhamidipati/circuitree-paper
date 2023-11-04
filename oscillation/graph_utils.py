@@ -1,4 +1,4 @@
-from circuitree import CircuitGrammar
+from circuitree import CircuitGrammar, CircuiTree
 from circuitree.models import SimpleNetworkGrammar
 from functools import partial
 from typing import Any, Container, Iterable, Mapping, Optional
@@ -8,12 +8,53 @@ import numpy as np
 from tqdm import tqdm
 
 
+def make_complexity_graph(
+    G: nx.DiGraph, grammar: CircuitGrammar, from_circuits: Iterable[Any]
+) -> nx.DiGraph:
+    """Given a search graph G and a root node, return the complexity graph.
+
+    The complexity graph contains only the terminal nodes of G that are "successful"
+    (i.e. have a mean reward above the cutoff). Nodes are connected if they differ
+    by one action.
+
+    This is implemented by first creating a subgraph of G containing only the
+    successful terminal nodes. In that subgraph, each edge between two non-terminal nodes
+    represents an edge in the complexity graph. Then for each edge between two
+    """
+    successful_circuits = set(from_circuits)
+
+    # Create the complexity graph as a subgraph of G. Then for each edge between two
+    # non-terminal nodes, add an edge between the corresponding terminal nodes.
+    terminal_edges = {n: next(G.predecessors(n)) for n in successful_circuits}
+    succesful_predecessors = set(terminal_edges.values())
+    complexity_graph: nx.DiGraph = G.subgraph(
+        succesful_predecessors | successful_circuits
+    ).copy()
+    edges_to_add = []
+    for terminal_1, nonterminal_1 in terminal_edges.items():
+        for node in complexity_graph.successors(nonterminal_1):
+            if node == terminal_1:
+                continue
+            nonterminal_2 = node
+            terminal_2 = grammar.do_action(nonterminal_2, "*terminate*")
+            edges_to_add.append((terminal_1, terminal_2))
+
+    for terminal_1, terminal_2 in edges_to_add:
+        nonterminal_1 = terminal_edges[terminal_1]
+        nonterminal_2 = terminal_edges[terminal_2]
+        complexity_graph.add_edge(
+            terminal_1, terminal_2, **G.edges[nonterminal_1, nonterminal_2]
+        )
+        complexity_graph.remove_edge(nonterminal_1, nonterminal_2)
+
+    # Finally, remove nonterminal nodes
+    complexity_graph.remove_nodes_from(succesful_predecessors)
+
+    return complexity_graph
+
+
 def _get_mean_reward(G: nx.DiGraph, n: Any) -> float:
     return G.nodes[n]["reward"] / max(1, G.nodes[n]["visits"])
-
-
-def _edge_reward_loss(node1, node2, edge_attrs: Mapping) -> float:
-    return 1 - edge_attrs["reward"] / max(1, edge_attrs["visits"])
 
 
 def get_successful_states(G: nx.DiGraph, grammar: CircuitGrammar, cutoff: float):
@@ -23,12 +64,140 @@ def get_successful_states(G: nx.DiGraph, grammar: CircuitGrammar, cutoff: float)
             if m >= cutoff:
                 yield n
 
+def compute_Q_tilde(
+    G: nx.DiGraph, root_node: Any, inplace: bool = True, in_edges: bool = True
+) -> nx.DiGraph:
+    if inplace:
+        graph = G
+    else:
+        graph = G.copy()
 
-def complexity_layout(
-    complexity_graph: nx.DiGraph,
-) -> Mapping[Any, tuple]:
-    pos = graphviz_layout(complexity_graph, prog="dot")
+    # Iterate over nodes in DFS post-order
+    for v in nx.dfs_postorder_nodes(graph, root_node):
+        # Terminal node
+        if graph.out_degree(v) == 0:
+            Q_tilde = _get_mean_reward(graph, v)
+        # Non-terminal node
+        else:
+            Q_tilde = np.mean([graph.nodes[w]["Q_tilde"] for w in graph.successors(v)])
+        graph.nodes[v]["Q_tilde"] = Q_tilde
+        if in_edges:
+            for u in graph.predecessors(v):
+                graph.edges[u, v]["Q_tilde"] = Q_tilde
+
+    if not inplace:
+        return graph
+
+
+def compute_Q_tilde_loss(G, root, inplace=True):
+    if inplace:
+        graph = G
+    else:
+        graph = G.copy()
+    compute_Q_tilde(graph, root, inplace=True, in_edges=True)
+    for e in graph.edges:
+        graph.edges[e]["Q_tilde_loss"] = 1 - G.edges[e]["Q_tilde"]
+
+
+def get_minimum_spanning_arborescence(
+    tree: Optional[CircuiTree] = None,
+    graph: Optional[nx.DiGraph] = None,
+    root: Optional[Any] = None,
+    weight: str = "Q_tilde_loss",
+) -> nx.DiGraph:
+    G = tree.graph if tree is not None else graph
+    root = tree.root if tree is not None else root
+
+    if weight == "Q_tilde_loss" and weight not in G.edges[next(iter(G.edges))]:
+        compute_Q_tilde_loss(G, root, inplace=True)
+
+    # Compute the complexity tree as the minimum spanning tree of G
+    msa: nx.DiGraph = nx.minimum_spanning_arborescence(
+        G, attr=weight, preserve_attrs=True
+    )
+
+    # Copy node attributes from G
+    nx.set_node_attributes(msa, G.nodes)
+
+    return msa
+
+
+def prune_bad_branches_inplace(
+    tree: nx.DiGraph,
+    root_node: Any,
+    good_leaves: set[Any],
+) -> set[Any]:
+    """Given a rooted directed tree (arborescence) and a set of good leaves, remove all
+    branches that do not lead to a good leaf."""
+    # Recursively remove nodes that do not lead to a successful terminal node
+    good_leaves = set(good_leaves) | {root_node}
+    bad_leaves = set(n for n in tree.nodes if tree.out_degree(n) == 0) - good_leaves
+    while bad_leaves:
+        tree.remove_nodes_from(bad_leaves)
+        bad_leaves = set(n for n in tree.nodes if tree.out_degree(n) == 0) - good_leaves
+
+
+def n_interactions(genotype: str) -> int:
+    """Returns the number of interactions in a SimpleNetworkGrammar genotype."""
+    interactions_joined = genotype.split("::")[1]
+    if interactions_joined:
+        return genotype.count("_") + 1
+    else:
+        return 0
+
+
+def simplenetwork_complexity_layout(
+    complexity_graph: nx.DiGraph, grammar: SimpleNetworkGrammar
+) -> dict[str, tuple[float, float]]:
+    """Returns a layout for the complexity graph of a search.
+    Accounts for multiple connected components by computing the number of interactions
+    in each circuit."""
+
+    pos: dict[str, tuple[float, float]] = graphviz_layout(complexity_graph, prog="dot")
+    
+    ### Deal with multiple connected components
+    unique_yvals = np.array(sorted(set(y for _, y in pos.values())))
+    dy = unique_yvals[1] - unique_yvals[0]
+
+    # For each connected component, find the correct y value based on circuit complexity
+    components = list(nx.weakly_connected_components(complexity_graph))
+    components = sorted(components, key=len, reverse=True)
+    smallest_circuits = [min(c, key=len) for c in components]
+    min_depth_per_component = np.array([n_interactions(n) for n in smallest_circuits])
+    depth_bias = dy * (min_depth_per_component - min_depth_per_component.min())
+    for component, ybias in zip(components, depth_bias):
+        for node in component:
+            x, y = pos[node]
+            pos[node] = (x, y - ybias)
+
+    # Find the largest layer in any component and get the average x distance
+    nodes, xyvals = zip(*pos.items())
+    xvals, yvals = np.array(xyvals).T
+    largest_layer_xvals = np.array([])
+    for component in components:
+        cmask = np.isin(nodes, list(component))
+        for yval in unique_yvals:
+            mask = cmask & np.isclose(yvals, yval)
+            if mask.sum() > largest_layer_xvals.size:
+                largest_layer_xvals = xvals[mask]
+    dx = np.mean(np.diff(np.sort(largest_layer_xvals)))
+
+    # Make sure components are not overlapping in the x dimension
+    prev_x_max = xvals.min()
+    for i, component in enumerate(components):
+        cmask = np.isin(nodes, list(component))
+        x_shift = prev_x_max - xvals[cmask].min() + 2 * dx
+        xvals[cmask] += x_shift
+        prev_x_max = xvals[cmask].max()
+    pos = dict(zip(nodes, zip(xvals, yvals)))
     return pos
+
+
+##########
+
+
+def _edge_reward_loss(node1, node2, edge_attrs: Mapping) -> float:
+    return 1 - edge_attrs["reward"] / max(1, edge_attrs["visits"])
 
 
 def get_shortest_paths_from_root(
@@ -118,94 +287,6 @@ def get_posterior(
         raise NotImplementedError("Hierarchical posteriors not supported.")
 
 
-def make_complexity_graph(G: nx.DiGraph, grammar: CircuitGrammar, cutoff: float) -> nx.DiGraph:
-    """Given a search graph G and a root node, return the complexity graph.
-
-    The complexity graph contains only the terminal nodes of G that are "successful"
-    (i.e. have a mean reward above the cutoff). Nodes are connected if they differ
-    by one action.
-
-    This is implemented by first creating a subgraph of G containing only the
-    successful terminal nodes. In that subgraph, each edge between two non-terminal nodes
-    represents an edge in the complexity graph. Then for each edge between two
-    """
-    # Get the terminal nodes of G that are successful
-    successful_states = set(get_successful_states(G, grammar, cutoff))
-
-    # Create the complexity graph as a subgraph of G. Then for each edge between two
-    # non-terminal nodes, add an edge between the corresponding terminal nodes.
-    terminal_edges = {n: next(G.predecessors(n)) for n in successful_states}
-    succesful_predecessors = set(terminal_edges.values())
-    complexity_graph: nx.DiGraph = G.subgraph(
-        succesful_predecessors | successful_states
-    ).copy()
-    edges_to_add = []
-    for terminal_1, nonterminal_1 in terminal_edges.items():
-        for node in complexity_graph.successors(nonterminal_1):
-            if node == terminal_1:
-                continue
-            nonterminal_2 = node
-            terminal_2 = grammar.do_action(nonterminal_2, "*terminate*")
-            edges_to_add.append((terminal_1, terminal_2))
-
-    for terminal_1, terminal_2 in edges_to_add:
-        nonterminal_1 = terminal_edges[terminal_1]
-        nonterminal_2 = terminal_edges[terminal_2]
-        complexity_graph.add_edge(
-            terminal_1, terminal_2, **G.edges[nonterminal_1, nonterminal_2]
-        )
-        complexity_graph.remove_edge(nonterminal_1, nonterminal_2)
-
-    # Finally, remove nonterminal nodes
-    complexity_graph.remove_nodes_from(succesful_predecessors)
-
-    return complexity_graph
-
-
-def compute_Q_tilde(
-    G: nx.DiGraph, root_node: Any, inplace: bool = True, in_edges: bool = True
-) -> nx.DiGraph:
-    if inplace:
-        graph = G
-    else:
-        graph = G.copy()
-
-    # Iterate over nodes in DFS post-order
-    for v in nx.dfs_postorder_nodes(graph, root_node):
-        # Terminal node
-        if graph.out_degree(v) == 0:
-            Q_tilde = _get_mean_reward(graph, v)
-        # Non-terminal node
-        else:
-            Q_tilde = np.mean([graph.nodes[w]["Q_tilde"] for w in graph.successors(v)])
-        graph.nodes[v]["Q_tilde"] = Q_tilde
-        if in_edges:
-            for u in graph.predecessors(v):
-                graph.edges[u, v]["Q_tilde"] = Q_tilde
-
-    if not inplace:
-        return graph
-
-
-def prune_complexity_tree(
-    tree: nx.DiGraph, root_node: Any, grammar: CircuitGrammar, n_best: int, success_cutoff: float
-) -> set[Any]:
-    # Get the terminal nodes that are successful
-    key = partial(_get_mean_reward, tree)
-    best_states = get_successful_states(tree, grammar, success_cutoff)
-    best_states = sorted(best_states, key=key, reverse=True)[:n_best]
-    best_states = set(best_states)
-
-    # Recursively remove nodes that do not lead to a successful terminal node
-    good_leaves = best_states | {root_node}
-    bad_leaves = set(n for n in tree.nodes if tree.out_degree(n) == 0) - good_leaves
-    while bad_leaves:
-        tree.remove_nodes_from(bad_leaves)
-        bad_leaves = set(n for n in tree.nodes if tree.out_degree(n) == 0) - good_leaves
-
-    return best_states
-
-
 def make_complexity_tree_mst(
     G: nx.DiGraph,
     root_node: Any,
@@ -257,9 +338,8 @@ def make_complexity_tree_mst(
     nx.set_node_attributes(complexity_tree, G.nodes)
 
     if n_best is not None:
-        best_states = prune_complexity_tree(
-            complexity_tree, root_node, grammar, n_best, success_cutoff
-        )
+        best_states = ...  # TODO: get the n_best best states
+        prune_bad_branches_inplace(complexity_tree, root_node, best_states)
         return complexity_tree, best_states
     else:
         terminal_nodes = set(n for n in complexity_tree.nodes if grammar.is_terminal(n))
@@ -270,6 +350,7 @@ def merge_search_graphs(
     graphs: list[nx.DiGraph],
     merge_node_attrs: Optional[Container] = None,
     merge_edge_attrs: Optional[Container] = None,
+    progress: bool = False,
 ) -> nx.DiGraph:
     """Given a list of search graphs, return a single merged search graph.
     Node and edge attributes that have numerical values (int or float) such as visits and rewards
@@ -296,12 +377,16 @@ def merge_search_graphs(
     if merge_edge_attrs is not None:
         edge_attrs = edge_attrs & merge_edge_attrs
 
-    for other_graph in graphs:
+    iterator = graphs
+    if progress:
+        iterator = tqdm(graphs, desc="Merging graphs", total=len(graphs) + 1)
+        iterator.update(1)
+    for other_graph in iterator:
         # Add nodes/edges not in the graph and accumulate attributes
         add_nodes = []
         for n, attrs in other_graph.nodes(data=True):
             if n not in graph.nodes:
-                add_nodes.append((n, attrs))
+                add_nodes.append((n, {k: attrs[k] for k in node_attrs}))
             else:
                 for a in node_attrs:
                     graph.nodes[n][a] = sum(
@@ -312,7 +397,7 @@ def merge_search_graphs(
         add_edges = []
         for *e, attrs in other_graph.edges(data=True):
             if e not in graph.edges:
-                add_edges.append((e, attrs))
+                add_edges.append((*e, {k: attrs[k] for k in edge_attrs}))
             else:
                 for a in edge_attrs:
                     graph.edges[e][a] = sum(
@@ -323,7 +408,9 @@ def merge_search_graphs(
     return graph
 
 
-def n_connected_components_in_circuit(genotype: Any, grammar: SimpleNetworkGrammar) -> int:
+def n_connected_components_in_circuit(
+    genotype: Any, grammar: SimpleNetworkGrammar
+) -> int:
     """Returns the number of connected components in the circuit represented by the
     genotype. Ignores circuit components that have no connections.
 
