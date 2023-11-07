@@ -1,5 +1,6 @@
 from datetime import datetime
 from itertools import chain, islice
+from typing import Optional
 from circuitree import SimpleNetworkGrammar
 import pandas as pd
 from oscillation import OscillationTree
@@ -19,6 +20,8 @@ def main(
     sampling_method: str = "enumeration",
     nprocs: int = 1,
     nprocs_testing: int = 1,
+    null_chunksize: Optional[int] = None,
+    succ_chunksize: Optional[int] = None,
     save: bool = False,
     save_dir: Path = None,
     progress: bool = False,
@@ -39,7 +42,7 @@ def main(
         Path(search_graph_gml), search_graph_json, grammar_cls=SimpleNetworkGrammar
     )
     search_graph_json.unlink()
-    
+
     # Identify successful circuits
     successful_circuits = set(
         n
@@ -63,6 +66,13 @@ def main(
 
     print(f"Computing frequencies for {len(patterns)} patterns...")
 
+    null_kwargs = {}
+    succ_kwargs = {}
+    if null_chunksize is not None:
+        null_kwargs["chunksize"] = null_chunksize
+    if succ_chunksize is not None:
+        succ_kwargs["chunksize"] = succ_chunksize
+
     df: pd.DataFrame = tree.test_pattern_significance(
         patterns,
         n_samples=sample_size,
@@ -71,6 +81,8 @@ def main(
         nprocs_sampling=nprocs,
         nprocs_testing=nprocs_testing,
         confidence=confidence_level,
+        null_kwargs=null_kwargs,
+        succ_kwargs=succ_kwargs,
     )
     df["complexity"] = df["pattern"].map(pattern_complexity)
 
@@ -92,20 +104,40 @@ def main(
 
 
 if __name__ == "__main__":
-    graph_path = Path(
-        # "data/oscillation/mcts/mcts_bootstrap_short_231020_175449/231022_merged_search_graph"
-        "data/oscillation/mcts/mcts_bootstrap_long_231022_173227/231026_merged_search_graph"
+    # graph_path = Path(
+    #     # "data/oscillation/mcts/mcts_bootstrap_short_231020_175449/231022_merged_search_graph"
+    #     "data/oscillation/mcts/mcts_bootstrap_long_231022_173227/231026_merged_search_graph"
+    # )
+    # graph_gml = graph_path.with_suffix(".gml.gz")
+    # graph_json = graph_path.with_suffix(".json")
+
+    graph_dir = Path(
+        "data/aws_exhaustion_exploration2.00"
+        "/231104-19-32-24_5tf_exhaustion_mutationrate0.5_batch1_max_interactions15_exploration2.000"
+        "/backups"
     )
-    graph_gml = graph_path.with_suffix(".gml.gz")
-    graph_json = graph_path.with_suffix(".json")
-    save_dir = graph_path.parent
+    graph_gml = graph_dir.joinpath(
+        "tree-28047823-dd31-4723-9dc1-f00ae6545013_2023-11-06_10-33-54.gml.gz"
+    )
+    graph_json = graph_dir.joinpath(
+        "tree-28047823-dd31-4723-9dc1-f00ae6545013_2023-11-04_12-32-24.json"
+    )
+
+    save_dir = graph_dir.parent.joinpath("analysis")
+    save_dir.mkdir(exist_ok=True)
+
     main(
         search_graph_gml=graph_gml,
         search_graph_json=graph_json,
         to_depth=9,
-        sample_size=100_000,
+        sample_size=10_000,
+        sampling_method="rejection",
         nprocs=13,
         nprocs_testing=13,
+        # null_chunksize=2_000,
+        # succ_chunksize=2_000,
+        null_chunksize=100,
+        succ_chunksize=20,
         progress=True,
         save=True,
         save_dir=save_dir,
