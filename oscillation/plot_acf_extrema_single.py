@@ -44,6 +44,7 @@ def plot_network_quantity_and_acorr(
     dpi,
     fmt,
     figsize=(2.5, 2.5),
+    annotate_acf_min=True,
     # plot_motifs=(),
     suptitle=None,
     suffix="",
@@ -95,15 +96,16 @@ def plot_network_quantity_and_acorr(
         ax2.plot(t_mins[:-half_nt], acorr[j, :], lw=1)
     corr_time_mins = corr_time / 60.0
     # ax3.scatter(corr_time_mins, minimum_val, marker="x", s=50, c="r", zorder=100)
-    ax2.annotate(
-        rf"$\mathrm{{ACF}}_\mathrm{{min}}={{{minimum_val:.2f}}}$",
-        (corr_time_mins, minimum_val),
-        (corr_time_mins + 0.1 * t_mins.max(), -1.3),
-        arrowprops=dict(arrowstyle="->"),
-        # ha="left",
-        # va="bottom",
-        size=10,
-    )
+    if annotate_acf_min:
+        ax2.annotate(
+            rf"$\mathrm{{ACF}}_\mathrm{{min}}={{{minimum_val:.2f}}}$",
+            (corr_time_mins, minimum_val),
+            (corr_time_mins + 0.1 * t_mins.max(), -1.3),
+            arrowprops=dict(arrowstyle="->"),
+            # ha="left",
+            # va="bottom",
+            size=10,
+        )
     ax2.set_xlabel("Time (mins)")
     ax2.set_ylabel("Autocorrelation")
     ax2.set_ylim(-1.5, 1.0)

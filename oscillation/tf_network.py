@@ -221,8 +221,8 @@ class TFNetworkModel:
         # Compute autocorrelation
         acorrs = autocorrelate_vectorized(filtered)
 
-        # Compute the location and size of the largest interior extremum over
-        # all species
+        # Compute the location and size of the lowest minimum (excluding bounds)
+        # over all species
         where_minima, minima = compute_lowest_minima(acorrs)
         if abs:
             minima = np.abs(minima)
