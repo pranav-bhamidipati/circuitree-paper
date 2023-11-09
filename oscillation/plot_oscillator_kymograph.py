@@ -163,11 +163,12 @@ def main(
     fig = plt.figure(figsize=figsize)
     plt.title("Oscillators discovered during sampling")
 
+    # palette = sns.color_palette(
     hmap = sns.heatmap(
         data=p_reps_with_osc[:, :where_step_max],
         vmin=0,
         vmax=1,
-        cmap="viridis",
+        cmap="rocket_r",
         cbar_kws={"label": f"P(Discovery), n={n_replicates}"},
     )
 
@@ -177,7 +178,7 @@ def main(
     complexities = []
     y_complexities = []
     for idx in where_complexity_changes:
-        hmap.axhline(idx, color="white", lw=0.5, ls="--")
+        hmap.axhline(idx, color="black", lw=0.5, ls="--")
         cpx = results_df.iloc[idx]["complexity"]
         y_cpx = np.where(results_df["complexity"] == cpx)[0].mean()
         complexities.append(cpx)
@@ -225,5 +226,5 @@ if __name__ == "__main__":
         step_max=step_max,
         save=True,
         save_dir=save_dir,
-        # fmt="pdf",
+        fmt="pdf",
     )

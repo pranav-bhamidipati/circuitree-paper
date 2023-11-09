@@ -2,10 +2,11 @@ from datetime import datetime
 from functools import cache, partial
 from pathlib import Path
 from typing import Optional
+from matplotlib.cm import ScalarMappable
 import matplotlib.pyplot as plt
+import numpy as np
 import seaborn as sns
 import pandas as pd
-import numpy as np
 import warnings
 
 from circuitree.models import SimpleNetworkGrammar
@@ -23,14 +24,6 @@ convert_to_sampled_params = partial(
 )
 
 
-def _get_n_interactions(
-    state: str,
-    grammar: SimpleNetworkGrammar,
-):
-    components, activations, inhibitions = grammar.parse_genotype(state)
-    return len(activations) + len(inhibitions)
-
-
 def _get_motif(
     state: str,
     motif: str,
@@ -42,7 +35,12 @@ def _get_motif(
 def main(
     frequencies_csv: Path,
     transposition_table_parquet: Path,
-    motifs={"AI": "ABa_BAi", "AAI": "ABa_BCa_CAi", "III": "ABi_BCi_CAi"},
+    motifs={
+        "AI": "ABa_BAi",
+        "III": "ABi_BCi_CAi",
+        "Toggle": "ABi_BAi",
+        # "AAI": "ABa_BCa_CAi",
+    },
     figsize: tuple[float, float] = (8, 4),
     save: bool = False,
     save_dir: Optional[Path] = None,
@@ -52,18 +50,11 @@ def main(
     grammar = SimpleNetworkGrammar(
         components=["A", "B", "C"], interactions=["activates", "inhibits"]
     )
-    get_n_interactions = partial(_get_n_interactions, grammar=grammar)
     freqs_df = pd.read_csv(frequencies_csv)
     df = pd.read_parquet(transposition_table_parquet).reset_index(drop=True)
-    del df["reward"]
     df = df.iloc[freqs_df["index_in_transposition_table"].values, :]
     df["frequency_per_min"] = freqs_df["frequency_per_min"].values
-    df["ACF_min"] = freqs_df["ACF_min"].values
     df["period_mins"] = 1 / df["frequency_per_min"]
-
-    df["n_interactions"] = pd.Categorical(
-        df["state"].apply(get_n_interactions), ordered=True, categories=range(0, 10)
-    )
 
     for motif, motif_code in motifs.items():
         get_motif = partial(_get_motif, motif=motif_code, grammar=grammar)
@@ -78,7 +69,7 @@ def main(
             return "(none)"
 
     motif_combinations = df[list(motifs.keys())].values
-    df["NFR_combination"] = pd.Categorical(
+    df["pattern_combination"] = pd.Categorical(
         [concat_motifs(*mc) for mc in motif_combinations]
     )
 
@@ -89,25 +80,53 @@ def main(
 
     warnings.filterwarnings(action="ignore", category=FutureWarning)
 
-    # Plot the frequency of oscillation vs. number of interactions
-    fig = plt.figure(figsize=figsize)
-    ax = fig.add_subplot(1, 1, 1)
-    sns.histplot(
-        data=df,
-        x="period_mins",
-        y="NFR_combination",
-        stat="proportion",
-        # y=df["n_interactions"],
-        bins=35,
-        log_scale=(True, False),
-        # multiple="stack",
-        ax=ax,
+    ### Plotting
+
+    # Plot the period of oscillation vs. the motifs present in the circuit
+    df["log_period_mins"] = np.log10(df["period_mins"])
+    order = (
+        df.groupby("pattern_combination")
+        .size()
+        .sort_values(ascending=False)
+        .index.tolist()
     )
+    fig, (ax1, ax2) = plt.subplots(
+        1,
+        2,
+        figsize=(figsize[0] * 0.9, figsize[1] * 1.1),
+        gridspec_kw={"width_ratios": [3, 1]},
+    )
+    sns.violinplot(
+        data=df,
+        x="log_period_mins",
+        y="pattern_combination",
+        scale="width",
+        order=order,
+        ax=ax1,
+    )
+    plt.xlabel(r"Period (mins)")
+    plt.ylabel("Pattern combination")
+    sns.despine()
+
+    # Plot a barplot to the right of the violin plot with the number of samples in each group
+    pattern_sizes = df.groupby("pattern_combination").size()
+    sns.barplot(x=pattern_sizes, y=pattern_sizes.index, order=order, ax=ax2)
+    plt.xlabel("# Oscillating samples")
+    # for i, group in enumerate(order):
+    #     group_size = df[df["pattern_combination"] == group].shape[0]
+    #     ax.text(
+    #         1.05,
+    #         i,
+    #         f"{group_size:,}",
+    #         ha="left",
+    #         va="center",
+    #         transform=ax.get_yaxis_transform(),
+    #     )
 
     plt.tight_layout()
     if save:
-        today = datetime.today().strftime("%Y-%m-%d")
-        fpath = Path(save_dir).joinpath(f"{today}_log_period_by_NFR.{fmt}")
+        today = datetime.today().strftime("%y%m%d")
+        fpath = Path(save_dir).joinpath(f"{today}_log_period_by_motif.{fmt}")
         print(f"Writing to: {fpath.resolve().absolute()}")
         plt.savefig(fpath, dpi=dpi, bbox_inches="tight")
 
@@ -118,42 +137,12 @@ def main(
     cmap = sns.color_palette("viridis", as_cmap=True)
     for i, (param, label) in enumerate(zip(SAMPLED_VAR_NAMES, SAMPLED_VAR_MATHTEXT)):
         ax = fig.add_subplot(2, 4, i + 1)
-
-        # plt.scatter(df["period_mins"], df[param], s=1, alpha=0.5)
-        # plt.hist2d(df["period_mins"], df[param])
-        # sns.histplot(
-        #     x=df["period_mins"],
-        #     y=df[param],
-        #     bins=20,
-        #     cmap=cmap,
-        #     cbar=True,
-        #     vmin=1,
-        #     cbar_kws={"label": "Number of samples"},
-        #     ax=ax,
-        # )
-        # plt.xlabel("Period (min)")
-        # xsuffix = "period"
-
-        # plt.scatter(df["frequency_per_min"], df[param], s=1, alpha=0.5)
-        # plt.hist2d(df["frequency_per_min"], df[param], cmap=cmap, bins=50, cmin=1)
-        # sns.kdeplot(
-        #     x=df["period_mins"],
-        #     y=df[param],
-        #     cmap=cmap,
-        #     shade=True,
-        #     ax=ax,
-        # )
         sns.histplot(
             x=df["period_mins"],
             y=df[param],
-            # size=1,
-            # alpha=0.5,
             log_scale=(True, False),
             bins=35,
             cmap=cmap,
-            # cbar=True,
-            # vmin=-0.0,
-            # cbar_kws={"label": "Number of samples"},
             ax=ax,
         )
         plt.xlabel(r"Period (mins)")
@@ -168,8 +157,34 @@ def main(
 
     plt.tight_layout()
     if save:
-        today = datetime.today().strftime("%Y-%m-%d")
+        today = datetime.today().strftime("%y%m%d")
         fpath = Path(save_dir).joinpath(f"{today}_params_vs_{xsuffix}.{fmt}")
+        print(f"Writing to: {fpath.resolve().absolute()}")
+        plt.savefig(fpath, dpi=dpi, bbox_inches="tight")
+
+    # Plot the frequency of oscillation vs. gamma_p / gamma_m
+    fig, ax = plt.subplots(figsize=(figsize[0] / 2.5, figsize[0] / 3))
+
+    # Set a viridis cmap that makes the lowest value (0) white
+    cmap = sns.color_palette("viridis", as_cmap=True)
+    df["degradation_ratio"] = df["gamma_p"] / df["gamma_m"]
+    sns.histplot(
+        data=df,
+        x="period_mins",
+        y="degradation_ratio",
+        log_scale=(True, True),
+        bins=35,
+        cmap=cmap,
+    )
+    plt.xlabel(r"Period (mins)")
+    plt.ylabel(r"$\frac{\gamma_p}{\gamma_m}$", rotation=0, labelpad=12, fontsize=16)
+    # Plot colorbar
+    cbar = plt.colorbar(ScalarMappable(cmap=cmap), ax=ax)
+
+    plt.tight_layout()
+    if save:
+        today = datetime.today().strftime("%y%m%d")
+        fpath = Path(save_dir).joinpath(f"{today}_degradation_ratio_vs_period.{fmt}")
         print(f"Writing to: {fpath.resolve().absolute()}")
         plt.savefig(fpath, dpi=dpi, bbox_inches="tight")
 
