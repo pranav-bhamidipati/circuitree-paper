@@ -62,7 +62,12 @@ def main(
         tree = OscillationTree.from_file(
             gml, attrs_json, grammar_cls=SimpleNetworkGrammar
         )
-        msa = get_minimum_spanning_arborescence(tree)
+        for e in tree.graph.edges:
+            tree.graph.edges[e]["w"] = np.exp(-tree.graph.edges[e]["visits"])
+        msa = get_minimum_spanning_arborescence(
+            tree,
+            weight="w",
+        )
 
         pos = nx.nx_agraph.graphviz_layout(msa, prog="dot")
         node_positions.append(pos)
@@ -139,9 +144,11 @@ def main(
 
 
 if __name__ == "__main__":
-    results_csv = Path("data/oscillation/230717_motifs.csv")
+    results_csv = Path("data/oscillation/231102_exhaustive_results.csv")
 
-    data_dir = Path("data/oscillation/mcts/mcts_bootstrap_short_231020_175449/0")
+    data_dir = Path(
+        "data/oscillation/mcts/mcts_bootstrap_short_exploration2.00_231103_140501/0"
+    )
     attrs_json = next(data_dir.glob("*.json"))
     save_dir = Path("figures/oscillation/dendrograms")
     save_dir.mkdir(exist_ok=True)
