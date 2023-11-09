@@ -64,6 +64,7 @@ def get_successful_states(G: nx.DiGraph, grammar: CircuitGrammar, cutoff: float)
             if m >= cutoff:
                 yield n
 
+
 def compute_Q_tilde(
     G: nx.DiGraph, root_node: Any, inplace: bool = True, in_edges: bool = True
 ) -> nx.DiGraph:
@@ -122,15 +123,15 @@ def get_minimum_spanning_arborescence(
     return msa
 
 
-def prune_bad_branches_inplace(
+def prune_branches_inplace(
     tree: nx.DiGraph,
     root_node: Any,
-    good_leaves: set[Any],
+    keep_leaves: set[Any],
 ) -> set[Any]:
-    """Given a rooted directed tree (arborescence) and a set of good leaves, remove all
+    """Given a rooted directed tree (arborescence) and a set of leaves to keep, remove all
     branches that do not lead to a good leaf."""
     # Recursively remove nodes that do not lead to a successful terminal node
-    good_leaves = set(good_leaves) | {root_node}
+    good_leaves = set(keep_leaves) | {root_node}
     bad_leaves = set(n for n in tree.nodes if tree.out_degree(n) == 0) - good_leaves
     while bad_leaves:
         tree.remove_nodes_from(bad_leaves)
@@ -153,14 +154,20 @@ def simplenetwork_complexity_layout(
     Accounts for multiple connected components by computing the number of interactions
     in each circuit."""
 
-    pos: dict[str, tuple[float, float]] = graphviz_layout(complexity_graph, prog="dot")
-    
-    ### Deal with multiple connected components
-    unique_yvals = np.array(sorted(set(y for _, y in pos.values())))
-    dy = unique_yvals[1] - unique_yvals[0]
+    if complexity_graph.number_of_edges() == 0:
+        raise ValueError("The complexity graph has no edges.")
 
-    # For each connected component, find the correct y value based on circuit complexity
+    pos: dict[str, tuple[float, float]] = graphviz_layout(complexity_graph, prog="dot")
+
+    ### Deal with multiple connected components (clusters of circuits)
+    # Find connected components
     components = list(nx.weakly_connected_components(complexity_graph))
+
+    # Infer the y spacing between components
+    edge0 = next(iter(complexity_graph.edges))
+    dy = pos[edge0[0]][1] - pos[edge0[1]][1]
+
+    # For each connected component, fix y values based on circuit complexity
     components = sorted(components, key=len, reverse=True)
     smallest_circuits = [min(c, key=len) for c in components]
     min_depth_per_component = np.array([n_interactions(n) for n in smallest_circuits])
@@ -173,6 +180,7 @@ def simplenetwork_complexity_layout(
     # Find the largest layer in any component and get the average x distance
     nodes, xyvals = zip(*pos.items())
     xvals, yvals = np.array(xyvals).T
+    unique_yvals = np.unique(yvals)
     largest_layer_xvals = np.array([])
     for component in components:
         cmask = np.isin(nodes, list(component))
@@ -339,7 +347,7 @@ def make_complexity_tree_mst(
 
     if n_best is not None:
         best_states = ...  # TODO: get the n_best best states
-        prune_bad_branches_inplace(complexity_tree, root_node, best_states)
+        prune_branches_inplace(complexity_tree, root_node, best_states)
         return complexity_tree, best_states
     else:
         terminal_nodes = set(n for n in complexity_tree.nodes if grammar.is_terminal(n))
