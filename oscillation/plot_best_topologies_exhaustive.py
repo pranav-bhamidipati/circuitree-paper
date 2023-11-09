@@ -11,14 +11,24 @@ import seaborn as sns
 
 from circuitree.models import SimpleNetworkGrammar
 
+_network_kwargs = dict(
+    fontsize=6,
+    padding=0.5,
+    lw=1,
+    node_shrink=0.7,
+    offset=0.8,
+    auto_shrink=0.9,
+    width=0.005,
+)
+
 
 def main(
     results_csv: Path,
     state_column: str = "state",
     p_osc_column: str = "p_oscillation",
     figsize: Optional[tuple[float, float]] = None,
-    plot_motifs: tuple = ("AI", "AAI", "III"),
-    plot_shape: tuple = (4, 5),
+    plot_motifs: tuple = ("AI", "III"),
+    plot_shape: tuple = (4, 2),
     save_dir: Path = Path("figures/oscillation"),
     bar_xshrink: float = 2 / 7,
     bar_yshrink: float = 1.0,
@@ -33,7 +43,7 @@ def main(
     xlim=(-1.95, 1.65),
     ylim=(-1.4, 1.9),
     suptitle: bool = True,
-    palette: str = "muted",
+    palette: str = "colorblind",
     **kwargs,
 ):
     plot_rows, plot_cols = plot_shape
@@ -100,9 +110,10 @@ def main(
     num_x = 0.125
     num_y = 0.85
     text_x = 0.90
+    network_kwargs = _network_kwargs | kwargs
     for i, state in enumerate(df_plot.index):
         ax = fig.add_subplot(plot_rows, plot_cols, i + 1)
-        plot_network(*grammar.parse_genotype(state), ax=ax, **kwargs)
+        plot_network(*grammar.parse_genotype(state), ax=ax, **network_kwargs)
         p_osc = df_plot[p_osc_column][state]
         # ax.set_title(rf"$Q=${p_osc:.4f}", **title_font)
         # ax.text(
@@ -192,28 +203,21 @@ def main(
 
 
 if __name__ == "__main__":
-    results_csv = Path("data/oscillation/230717_motifs.csv")
+    results_csv = Path("data/oscillation/231102_exhaustive_results.csv")
     main(
         results_csv=results_csv,
         save=True,
-        textscale=1.4,
-        text_dy=0.25,
-        suptitle=False,
-        fontsize=6,
-        padding=0.5,
-        lw=1,
-        node_shrink=0.7,
-        offset=0.8,
-        auto_shrink=0.9,
-        width=0.005,
         plot_labels=False,
         fmt="pdf",
-        plot_shape=(4, 2),
+        plot_shape=(5, 8),
         # bar_xshrink=0.6,
         # bar_yshrink=0.75,
         # bar_label_every=5,
-        bar_xshrink=1.5,
-        bar_yshrink=0.3,
-        bar_ticks=[1] + list(range(5, 26, 5)),
-        n_bar=25,
+        textscale=1.4,
+        text_dy=0.25,
+        suptitle=False,
+        bar_xshrink=1.0,
+        bar_yshrink=0.4,
+        bar_ticks=[1] + list(range(5, 51, 5)),
+        n_bar=50,
     )
