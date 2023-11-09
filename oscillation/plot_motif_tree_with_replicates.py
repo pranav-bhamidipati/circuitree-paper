@@ -330,15 +330,16 @@ def main(
         edgecolors="none",
         node_size=faint_node_sizes,
         node_color="silver",
+        linewidths=0.5,
         ax=ax,
     )
     nx.draw_networkx_nodes(
         complexity_graph,
         pos,
         nodelist=nodelist,
-        edgecolors="none",
+        edgecolors="black",
+        linewidths=0.5,
         node_size=node_sizes,
-        # node_color="k",
         node_color=node_colors,
         ax=ax,
     )
@@ -410,37 +411,37 @@ def main(
 
     ...
 
-    import seaborn as sns
+    # import seaborn as sns
 
-    # Plot P(motif discovery) vs log(Q_tilde)
-    fig = plt.figure()
+    # # Plot P(motif discovery) vs log(Q_tilde)
+    # fig = plt.figure()
 
-    sns.scatterplot(
-        data=results_df.loc[results_df["p_oscillation"] >= ctree.Q_threshold],
-        x="Q_tilde",
-        y="P_discovery",
-        edgecolor="none",
-        palette="husl",
-        hue="complexity",
-        legend="full",
-        alpha=0.5,
-        s=10,
-    )
+    # sns.scatterplot(
+    #     data=results_df.loc[results_df["p_oscillation"] >= ctree.Q_threshold],
+    #     x="Q_tilde",
+    #     y="P_discovery",
+    #     edgecolor="none",
+    #     palette="husl",
+    #     hue="complexity",
+    #     legend="full",
+    #     alpha=0.5,
+    #     s=10,
+    # )
 
-    # Move the legend outside the plot, adding a title "Complexity"
-    plt.legend(bbox_to_anchor=(1.05, 1), loc=2, borderaxespad=0.0, title="Complexity")
+    # # Move the legend outside the plot, adding a title "Complexity"
+    # plt.legend(bbox_to_anchor=(1.05, 1), loc=2, borderaxespad=0.0, title="Complexity")
 
-    plt.xlabel(r"$\tilde{Q}$ in oscillators")
-    plt.xscale("log")
-    plt.ylabel("P(motif discovery)")
+    # plt.xlabel(r"$\tilde{Q}$ in oscillators")
+    # plt.xscale("log")
+    # plt.ylabel("P(motif discovery)")
 
-    sns.despine()
+    # sns.despine()
 
-    if save:
-        today = datetime.now().strftime("%y%m%d")
-        fname = save_dir / f"{today}_motif_discovery_vs_Q_tilde{suffix}.{fmt}"
-        print(f"Saved figure to {fname}")
-        fig.savefig(fname, dpi=dpi, bbox_inches="tight")
+    # if save:
+    #     today = datetime.now().strftime("%y%m%d")
+    #     fname = save_dir / f"{today}_motif_discovery_vs_Q_tilde{suffix}.{fmt}"
+    #     print(f"Saved figure to {fname}")
+    #     fig.savefig(fname, dpi=dpi, bbox_inches="tight")
 
 
 if __name__ == "__main__":
@@ -483,5 +484,5 @@ if __name__ == "__main__":
         suffix=suffix,
         save=True,
         save_dir=save_dir,
-        # fmt="pdf",
+        fmt="pdf",
     )
