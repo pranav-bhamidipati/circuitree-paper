@@ -22,6 +22,8 @@ def main(
     nprocs_testing: int = 1,
     null_chunksize: Optional[int] = None,
     succ_chunksize: Optional[int] = None,
+    max_iter: Optional[int] = None,
+    barnard_ok: bool = True,
     save: bool = False,
     save_dir: Path = None,
     progress: bool = False,
@@ -68,10 +70,13 @@ def main(
 
     null_kwargs = {}
     succ_kwargs = {}
+    max_iter_kw = {}
     if null_chunksize is not None:
         null_kwargs["chunksize"] = null_chunksize
     if succ_chunksize is not None:
         succ_kwargs["chunksize"] = succ_chunksize
+    if max_iter is not None:
+        max_iter_kw["max_iter"] = max_iter
 
     df: pd.DataFrame = tree.test_pattern_significance(
         patterns,
@@ -83,6 +88,8 @@ def main(
         confidence=confidence_level,
         null_kwargs=null_kwargs,
         succ_kwargs=succ_kwargs,
+        barnard_ok=barnard_ok,
+        **max_iter_kw,
     )
     df["complexity"] = df["pattern"].map(pattern_complexity)
 
@@ -94,7 +101,7 @@ def main(
 
     if save:
         save_dir = Path(save_dir)
-        today = datetime.now().strftime("%y%m%d")
+        today = datetime.now().strftime("%y%m%d%H%M%S")
         fname = save_dir / f"{today}_circuit_pattern_tests_depth{to_depth}.csv"
         print(f"Writing to: {fname.resolve().absolute()}")
         df.to_csv(fname)
@@ -112,12 +119,13 @@ if __name__ == "__main__":
     # graph_json = graph_path.with_suffix(".json")
 
     graph_dir = Path(
-        "data/aws_exhaustion_exploration2.00"
+        # "data/aws_exhaustion_exploration2.00"
+        "data/oscillation/mcts"
         "/231104-19-32-24_5tf_exhaustion_mutationrate0.5_batch1_max_interactions15_exploration2.000"
         "/backups"
     )
     graph_gml = graph_dir.joinpath(
-        "tree-28047823-dd31-4723-9dc1-f00ae6545013_2023-11-06_10-33-54.gml.gz"
+        "tree-28047823-dd31-4723-9dc1-f00ae6545013_2023-11-07_02-00-36.gml.gz"
     )
     graph_json = graph_dir.joinpath(
         "tree-28047823-dd31-4723-9dc1-f00ae6545013_2023-11-04_12-32-24.json"
@@ -129,16 +137,20 @@ if __name__ == "__main__":
     main(
         search_graph_gml=graph_gml,
         search_graph_json=graph_json,
-        to_depth=9,
-        sample_size=10_000,
+        # to_depth=9,
+        to_depth=12,
+        # sample_size=500,
+        sample_size=500_000,
         sampling_method="rejection",
-        nprocs=13,
-        nprocs_testing=13,
-        # null_chunksize=2_000,
-        # succ_chunksize=2_000,
+        nprocs=186,
+        nprocs_testing=186,
         null_chunksize=100,
-        succ_chunksize=20,
+        succ_chunksize=5,
+        max_iter=10_000_000_000,
+        # null_chunksize=100,
+        # succ_chunksize=20,
         progress=True,
+        barnard_ok=False,
         save=True,
         save_dir=save_dir,
     )

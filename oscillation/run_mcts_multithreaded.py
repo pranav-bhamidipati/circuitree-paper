@@ -127,11 +127,13 @@ if __name__ == "__main__":
 
     # Default is sqrt(2)
     exploration_constant = 2.0
+    max_interactions = 15
 
     now = datetime.now().strftime("%y%m%d-%H-%M-%S")
     save_dir = Path(
         f"~/git/circuitree-paper/data/oscillation/mcts/"
-        f"{now}_5tf_lockfree_batchsize{batch_size}"
+        f"{now}_5tf_exhaustion_mutationrate0.5_batch{batch_size}"
+        f"_max_interactions{max_interactions}"
         f"_exploration{exploration_constant:.3f}"
     ).expanduser()
     save_dir.mkdir()
@@ -154,7 +156,7 @@ if __name__ == "__main__":
     main(
         logger=logger,
         save_dir=save_dir,
-        max_interactions=12,
+        max_interactions=max_interactions,
         backup_dir=backup_dir,
         batch_size=batch_size,
         exploration_constant=exploration_constant,
@@ -169,7 +171,7 @@ if __name__ == "__main__":
         # backup_every=60,
         # backup_every=3600,
         backup_every=7200,
+        # callback_every=1,
         callback_every=10,
-        # callback_every=10,
         # callback_every=20,
     )
