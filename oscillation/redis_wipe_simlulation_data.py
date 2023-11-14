@@ -26,7 +26,7 @@ def main(
     print(f"Deleting all keys except the parameter table {table_name}...")
     iterator: list = database.keys()
     n_keys = len(iterator)
-    iterator = (i for i in iterator if i != table_name)
+    iterator = (i for i in iterator if i.decode() != table_name)
     if progress:
         from tqdm import tqdm
 
