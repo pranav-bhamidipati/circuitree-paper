@@ -737,7 +737,7 @@ scipy = {version = "^1.11.3", markers = "python_version >= \"3.10\" and python_v
 type = "git"
 url = "https://github.com/pranav-bhamidipati/circuitree.git"
 reference = "main"
-resolved_reference = "82710af38fee01f607479f0b9c8fb43f6216f8c0"
+resolved_reference = "36934d695c0c68cac4faf3f45a49e6aac9d48be5"
 
 [[package]]
 name = "click"
