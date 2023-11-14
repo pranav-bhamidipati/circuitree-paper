@@ -60,6 +60,7 @@ def run_ssa_no_time_limit(
         task_logger.info(
             f"Removing component {mutated_component}:  {state} -> {new_state}"
         )
+        state = new_state
 
     kwargs = dict(
         seed=seed,
