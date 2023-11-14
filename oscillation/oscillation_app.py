@@ -49,6 +49,7 @@ def run_ssa_no_time_limit(
     # Remove the mutated component from the state string
     if mutated_component != "(none)":
         components, interactions_joined = state.strip("*").split("::")
+        where_mutated = components.find(mutated_component)
         components = components.replace(mutated_component, "")
         interactions = [
             ixn
@@ -61,6 +62,7 @@ def run_ssa_no_time_limit(
             f"Removing component {mutated_component}:  {state} -> {new_state}"
         )
         state = new_state
+        prots0 = prots0[:where_mutated] + prots0[where_mutated + 1 :]
 
     kwargs = dict(
         seed=seed,
