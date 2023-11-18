@@ -14,7 +14,7 @@ from oscillation_app import app
 def main(
     backup_file_pq: str | Path,
     restore_method="partial",
-    column_names=["state", "visit", "autocorr_min", "sim_time"],
+    column_names=["state", "param_idx", "autocorr_min", "sim_time"],
     state_keyset="transposition_table_keys",
     state_key_prefix="state_",
     prompt_on_delete=True,
@@ -65,10 +65,10 @@ def main(
     for state, state_df in tqdm(df.groupby("state"), total=df["state"].nunique()):
         state_key = state_key_prefix + state.strip("*")
         r.sadd(state_keyset, state_key)
-        for visit, autocorr_min, sim_time in zip(
-            state_df["visit"], state_df["autocorr_min"], state_df["sim_time"]
+        for param_idx, autocorr_min, sim_time in zip(
+            state_df["param_idx"], state_df["autocorr_min"], state_df["sim_time"]
         ):
-            hset_func(state_key, visit, json.dumps([autocorr_min, sim_time]))
+            hset_func(state_key, param_idx, json.dumps([autocorr_min, sim_time]))
 
 
 if __name__ == "__main__":

@@ -59,14 +59,14 @@ def main(
 
     iterator = tqdm(keys_to_backup) if progress_bar else keys_to_backup
     for i, key in enumerate(iterator):
-        visits, autocorr_mins, sim_times = zip(
+        param_indices, autocorr_mins, sim_times = zip(
             *(_unpack(k, v) for k, v in database.hgetall(key).items())
         )
         state_name = "*" + str(key.decode()).lstrip("state_")
         state_data = pd.DataFrame(
             {
                 "state": state_name,
-                "visit": visits,
+                "param_idx": param_indices,
                 "autocorr_min": autocorr_mins,
                 "sim_time": sim_times,
             }
@@ -78,7 +78,7 @@ def main(
             next_print_idx += 1
             next_print_point = print_points[next_print_idx]
 
-    df = pd.concat(data).sort_values(["state", "visit"])
+    df = pd.concat(data).sort_values(["state", "param_idx"])
     df["state"] = df["state"].astype("category")
 
     # Save to disk
