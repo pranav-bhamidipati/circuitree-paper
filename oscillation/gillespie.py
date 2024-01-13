@@ -56,7 +56,7 @@ DISSOCIATION_RATE_SUM = 100.0
 SAMPLING_RANGES = np.array(
     [
         (-2.0, 4.0),  # log10_kd_1
-        (0.0, 0.5),  # kd_2_1_ratio
+        (0.0, 0.25),  # kd_2_1_ratio
         (0.0, 1.0),  # km_unbound
         (1.0, 10.0),  # km_act
         (0.0, 5.0),  # nlog10_km_rep_unbound_ratio
@@ -172,9 +172,11 @@ def package_params_for_ssa(params) -> tuple:
     )
 
     # Promoter binding/unbinding are stored in index-able arrays, where the index
-    # is the number of bound species
+    # is the number of bound species.
+    # NOTE: k_off_2 is multiplied by 2 because either of the two bound TFs can unbind.
+    #     This stoichoimetry was erroneously neglected in the original implementation. 
     k_ons = np.array([k_on, k_on, 0.0]).astype(np.float64)
-    k_offs = np.array([0.0, k_off_1, k_off_2]).astype(np.float64)
+    k_offs = np.array([0.0, k_off_1, 2 * k_off_2]).astype(np.float64)
 
     # This is the parameter tuple actually used for the propensity function
     # due to added efficiency
