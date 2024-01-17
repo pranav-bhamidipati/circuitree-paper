@@ -63,15 +63,6 @@ class TFNetworkModel:
         self.a = len(self.activations)
         self.r = len(self.inhibitions)
 
-        # self._params_dict = _default_parameters
-        # self.update_params(params or param_updates or {})
-
-        # self.population = self.get_initial_population(
-        #     init_method=init_method,
-        #     init_params=init_params,
-        #     **kwargs,
-        # )
-
         self.t: Optional[Iterable[float]] = None
 
         self.seed = seed
@@ -156,23 +147,8 @@ class TFNetworkModel:
             return self.run_ssa_random_params(seed=seed, maxiter_ok=maxiter_ok)
         return self.ssa.run_batch(n_samples, seed=seed, maxiter_ok=maxiter_ok)
 
-    # def run_job(self, abs: bool = False, **kwargs):
-    #     """
-    #     Run the simulation with random parameters and default time-stepping.
-    #     For convenience, this returns the genotype ("state") and visit number in addition
-    #     to simulation results.
-    #     """
-    #     y_t, pop0, params, reward = self.run_ssa_and_get_acf_minima(
-    #         self.dt, self.nt, size=1, freqs=False, indices=False, abs=abs, **kwargs
-    #     )
-    #     return y_t, pop0, params, reward
-
     def run_batch_job(self, batch_size: int, abs: bool = False, **kwargs):
-        """
-        Run the simulation with random parameters and default time-stepping.
-        For convenience, this returns the genotype ("state") and visit number in addition
-        to simulation results.
-        """
+        """Run multiple simulations with random parameters and compute ACF min."""
         y_t, pop0s, param_sets, rewards = self.run_ssa_and_get_acf_minima(
             self.dt,
             self.nt,
@@ -192,9 +168,9 @@ class TFNetworkModel:
 
     @staticmethod
     def get_acf_minima(
-        y_t: np.ndarray[np.float64 | np.int64], abs: bool = False
+        prots_t: np.ndarray[np.float64 | np.int64], abs: bool = False
     ) -> np.ndarray[np.float64]:
-        filtered = filter_ndarray_binomial9(y_t.astype(np.float64))[..., 4:-4, :]
+        filtered = filter_ndarray_binomial9(prots_t.astype(np.float64))[..., 4:-4, :]
         acorrs = autocorrelate_vectorized(filtered)
         where_minima, minima = compute_lowest_minima(acorrs)
         if abs:
@@ -205,18 +181,18 @@ class TFNetworkModel:
     @staticmethod
     def get_acf_minima_and_results(
         t: np.ndarray,
-        pop_t: np.ndarray,
+        prots_t: np.ndarray,
         freqs: bool = True,
         indices: bool = False,
         abs: bool = False,
     ):
         """
-        Get the location and height of the largest extremum of the autocorrelation
+        Get the location and height of the lowest extremum of the autocorrelation
         function, excluding the bounds.
         """
 
         # Filter out high-frequency (salt-and-pepper) noise
-        filtered = filter_ndarray_binomial9(pop_t.astype(np.float64))[..., 4:-4, :]
+        filtered = filter_ndarray_binomial9(prots_t.astype(np.float64))[..., 4:-4, :]
 
         # Compute autocorrelation
         acorrs = autocorrelate_vectorized(filtered)
@@ -233,8 +209,7 @@ class TFNetworkModel:
                 where_minima > 0, 1 / (2 * tdiff[where_minima]), 0.0
             )
 
-        squeeze = where_minima.size == 1
-        if squeeze:
+        if where_minima.size == 1:
             where_minima = where_minima.flat[0]
             minima = minima.flat[0]
             if freqs:
@@ -340,6 +315,42 @@ class TFNetworkModel:
         prots0 = pop0[..., self.m : self.m * 2]
 
         return prots_t, prots0, params, acf_minima
+
+    def run_with_params_knockdown_and_get_results(
+        self,
+        params: np.ndarray,
+        knockdown_tf: str,
+        knockdown_coeff: float,
+        seed: Optional[int] = None,
+        maxiter_ok: bool = True,
+        nchunks: int = 1,
+    ) -> tuple[np.ndarray, float]:
+        """Run an SSA with a (partial or complete) knockdown of one of the TFs
+        and return the results."""
+        try:
+            which_knockdown = self.components.index(knockdown_tf)
+        except ValueError:
+            raise ValueError(
+                f"TF {knockdown_tf} not in network with genotype {self.genotype}."
+            )
+
+        pop0 = np.zeros((self.ssa.n_species,), dtype=np.int64)
+        y_t = self.ssa.run_with_params_in_chunks_with_knockdown(
+            pop0,
+            params,
+            which_knockdown=which_knockdown,
+            knockdown_coeff=knockdown_coeff,
+            nchunks=nchunks,
+            seed=seed,
+            maxiter_ok=maxiter_ok,
+        )
+
+        # Get presence and frequency of oscillation
+        prots_t = y_t[..., self.m : self.m * 2]
+        where_minimum, frequency, acf_minimum = self.get_acf_minima_and_results(
+            self.t, prots_t, freqs=True, indices=True, abs=False
+        )
+        return y_t, where_minimum, frequency, acf_minimum
 
 
 def autocorrelate_mean0(arr1d_norm: np.ndarray[np.float_]) -> np.ndarray[np.float_]:
@@ -450,15 +461,27 @@ def compute_lowest_minimum(seq: np.ndarray[np.float_]) -> tuple[int, float]:
 @njit
 def compute_lowest_minima(ndarr: np.ndarray) -> float:
     """
-    Get the lowest interior minimum of a batch of n 1d arrays, each of length m.
-    Vectorizes over arbitrary leading axes. For an input of shape (k, l, m, n),
-    k x l x n minima are calculated, and the min-of-minima is taken over the last axis
-    to return an array of shape (k, l).
-    Also returns the index of the minimum if it exists, otherwise -1.
+    Returns the lowest interior minima of an array along axis -2.
+    Vectorizes over arbitrary leading axes and takes the minimum over the last axis.
+    For example, with an input of shape (k, l, m, n), this function returns an array of
+    shape (k, l) where the lowest interior minimum is found over axis -2, then the
+    minimum of those minima is taken over axis -1.
+    Also returns the index of the minimum in axis -2 (or `-1` if no interior minima
+    were found).
     """
+    if ndarr.ndim == 2:
+        argmin = -1
+        minval = 0.0
+        for a in ndarr.T:
+            where_minimum, minimum = compute_lowest_minimum(a)
+            if minimum < minval:
+                minval = minimum
+                argmin = where_minimum
+        return np.array([argmin], dtype=np.int64), np.array([minval], dtype=np.float64)
+
     nd_shape = ndarr.shape[:-2]
-    where_largest_minima = np.zeros(nd_shape, dtype=np.int64)
-    largest_minima = np.zeros(nd_shape, dtype=np.float64)
+    where_lowest_minima = np.zeros(nd_shape, dtype=np.int64)
+    lowest_minima = np.zeros(nd_shape, dtype=np.float64)
     for leading_index in np.ndindex(nd_shape):
         argmin = -1
         minval = 0.0
@@ -467,6 +490,6 @@ def compute_lowest_minima(ndarr: np.ndarray) -> float:
             if minimum < minval:
                 minval = minimum
                 argmin = where_minimum
-        where_largest_minima[leading_index] = argmin
-        largest_minima[leading_index] = minval
-    return where_largest_minima, largest_minima
+        where_lowest_minima[leading_index] = argmin
+        lowest_minima[leading_index] = minval
+    return where_lowest_minima, lowest_minima

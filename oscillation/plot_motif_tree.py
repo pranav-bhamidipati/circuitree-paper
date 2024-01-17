@@ -6,11 +6,25 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 import matplotlib.pyplot as plt
+from matplotlib import colors, colormaps
 from circuitree import SimpleNetworkGrammar
+from circuitree.viz import plot_network
 import networkx as nx
-from graph_utils import simplenetwork_complexity_layout
+from graph_utils import compute_Q_tilde, simplenetwork_complexity_layout
 
 from oscillation import OscillationTree
+
+
+_network_kwargs = dict(
+    fontsize=6,
+    padding=0.5,
+    lw=1,
+    node_shrink=0.7,
+    offset=0.8,
+    auto_shrink=0.9,
+    width=0.005,
+    plot_labels=False,
+)
 
 
 def main(
@@ -18,9 +32,9 @@ def main(
     tree_gml: Path,
     config_json: Path,
     n_visits_exhaustive: int = np.inf,
-    node_size_scale: float = 30.0,
+    node_size_scale: float = 50.0,
     min_samples: int = 0,
-    figsize: tuple[float | int] = (9.0, 5.0),
+    figsize: tuple[float | int] = (4.0, 4.0),
     guide_position: Literal["left", "right"] = "left",
     save: bool = False,
     save_dir: Optional[Path] = None,
@@ -39,12 +53,26 @@ def main(
 
     # Load the dataframe of circuit patterns, p-values odds ratios, etc.
     print(f"Loading data of statistical tests on circuit patterns...")
-    stats_df = pd.read_csv(Path(stats_csv)).dropna()
+    stats_df = pd.read_csv(Path(stats_csv))
+
+    # Any samples with no observations in either category are not overrepresented
+    stats_df["overrepresented"].loc[
+        (stats_df["pattern_in_null"] == 0) & (stats_df["pattern_in_succ"] == 0)
+    ] = False
+
+    # For now, we will consider patterns that are not observed in the null distribution
+    # even though their significance cannot be quantified
+    stats_df["conditionally_significant"] = (stats_df["pattern_in_null"] == 0) & (
+        stats_df["pattern_in_succ"] > 0
+    )
+
     stats_df = stats_df.sort_values(
         ["complexity", "odds_ratio"], ascending=(True, False)
     )
     stats_df["is_motif"] = (
-        stats_df["significant"] & stats_df["overrepresented"] & stats_df["sufficient"]
+        stats_df["overrepresented"]
+        & stats_df["sufficient"]
+        & (stats_df["significant"] | stats_df["conditionally_significant"])
     )
     stats_df["nonterminal"] = [
         f"{components}::{pat}" for pat in stats_df["pattern"].values
@@ -69,6 +97,23 @@ def main(
     motif_nonterminals = [n[1:] for n in motif_terminals]
     print(f"Keeping {len(motif_terminals)} motifs with >= {min_samples} samples")
 
+    # # Rank the motifs by Q-hat
+    # motif_qhat = {
+    #     nt: ctree.graph.nodes[t]["reward"] / ctree.graph.nodes[t]["visits"]
+    #     for nt, t in zip(motif_nonterminals, motif_terminals)
+    # }
+    # motif_qhat = dict(sorted(motif_qhat.items(), key=lambda item: -item[1]))
+
+    # Compute Q-tilde for each node in the tree
+    compute_Q_tilde(ctree.graph, ctree.root, inplace=True)
+
+    # Identify motifs that were sampled to exhaustion
+    exhausted_motifs = set(
+        nt
+        for nt, t in zip(motif_nonterminals, motif_terminals)
+        if ctree.graph.nodes[t]["visits"] >= n_visits_exhaustive
+    )
+
     ### Plot the complexity graph
     print(f"Getting the complexity graph of motifs...")
 
@@ -79,40 +124,58 @@ def main(
         f"and {len(complexity_graph.edges)} edges"
     )
 
+    # # Print a report of all sources (motifs with no predecessors in the graph)
+    # sources = [n for n in complexity_graph.nodes if complexity_graph.in_degree(n) == 0]
+    # sources = sorted(sources, key=lambda n: -pos[n][1])
+    # print(f"Found {len(sources)} sources of motifs:")
+    # last_complexity = -1
+    # for source in sources:
+    #     interactions_joined = source.split("::")[1]
+    #     if interactions_joined:
+    #         complexity = interactions_joined.count("_") + 1
+    #     else:
+    #         complexity = 0
+    #     if complexity != last_complexity:
+    #         print()
+    #         print(f" Complexity {complexity}")
+    #         print(f"====================")
+    #         last_complexity = complexity
+    #     print(f"  {source}")
+    # print()
+
+    # Restrict this to motifs that were exhaustively sampled and any successors with
+    # high enough oscillation probability (Q_tilde)
+    highlight_edges = [
+        (n1, n2)
+        for n1, n2 in complexity_graph.edges
+        if n1 in exhausted_motifs
+        and (n2 in exhausted_motifs or complexity_graph.nodes[n2]["Q_tilde"] > 0.4)
+    ]
+    complexity_graph = complexity_graph.edge_subgraph(highlight_edges)
+    print(
+        f"Restricting the complexity graph to {len(complexity_graph.nodes)} nodes that"
+        f" were exhaustively sampled and their successors that are either exhausted or "
+        f" have suffiicent Q_tilde."
+    )
+
+    node_qtildes = np.array([q for _, q in complexity_graph.nodes(data="Q_tilde")])
+    ranks = np.argsort(-node_qtildes).argsort()
+
+    print("Top Q-tilde values:")
+    argsort = np.argsort(-node_qtildes)
+    top_qtildes = node_qtildes[argsort][:20]
+    top_nodes = np.array(complexity_graph.nodes)[argsort][:20]
+    print(*[f"\t{q:.3f}  <-- {n}" for n, q in zip(top_nodes, top_qtildes)], sep="\n")
+
     # Get node positions
     print(f"Computing node positions...")
     pos: dict[str, tuple[float, float]] = simplenetwork_complexity_layout(
         complexity_graph, ctree.grammar
     )
 
-    # Print a report of all sources (motifs with no predecessors in the graph)
-    sources = [n for n in complexity_graph.nodes if complexity_graph.in_degree(n) == 0]
-    sources = sorted(sources, key=lambda n: -pos[n][1])
-    print(f"Found {len(sources)} sources of motifs:")
-    last_complexity = -1
-    for source in sources:
-        interactions_joined = source.split("::")[1]
-        if interactions_joined:
-            complexity = interactions_joined.count("_") + 1
-        else:
-            complexity = 0
-        if complexity != last_complexity:
-            print()
-            print(f" Complexity {complexity}")
-            print(f"====================")
-            last_complexity = complexity
-        print(f"  {source}")
-    print()
-
     ### Plot the complexity graph
     print(f"Plotting complexity graph...")
 
-    # Highlight nodes that were sampled to exhaustion
-    exhausted_motifs = set(
-        n
-        for n, v in zip(motif_nonterminals, motif_terminal_samples)
-        if v >= n_visits_exhaustive
-    )
     # log10_terminal_samples = np.log10(motif_terminal_samples)
     # if np.unique(log10_terminal_samples).size == 1:
     #     node_sizes = 1 + node_size_scale * log10_terminal_samples
@@ -120,10 +183,51 @@ def main(
     #     node_sizes = (
     #         1 + node_size_scale * log10_terminal_samples / log10_terminal_samples.max()
     #     )
-    node_colors = [
-        "tab:green" if n in exhausted_motifs else "dimgray"
-        for n in complexity_graph.nodes
+    # node_colors = [
+    #     "tab:green" if n in exhausted_motifs else "dimgray"
+    #     for n in complexity_graph.nodes
+    # ]
+
+    ############################################
+
+    # # Color nodes by Q-hat ranking
+    # node_qhats = np.array([motif_qhat[n] for n in complexity_graph.nodes])
+    # ranks = np.argsort(-node_qhats).argsort()
+    # node_labels = dict(zip(complexity_graph.nodes, [f"{q:.2f}" for q in node_qhats]))
+    # cmap = plt.cm.get_cmap("viridis_r")
+    # node_colors = cmap(ranks / ranks.max())
+
+    cmap = plt.colormaps.get_cmap("viridis")
+    node_colors = cmap(node_qtildes / node_qtildes.max())
+
+    # node_sizes = 5 + node_size_scale * node_qtildes / node_qtildes.max()
+    # node_qtilde_map = dict(zip(complexity_graph.nodes, node_qtildes))
+
+    # node_labels = dict(zip(complexity_graph.nodes, [f"{q:.3f}" for q in node_qtildes]))
+
+    ############################################
+
+    # Outline nodes that were sampled to exhaustion
+    node_edgecolors = [
+        "black" if n in exhausted_motifs else "none" for n in complexity_graph.nodes
     ]
+
+    # # Highlight edges outgoing from exhausted motifs to either another exhausted
+    # # motif or a motif with Q_tilde > 0.4
+    # highlight_edges = [
+    #     (n1, n2)
+    #     for n1, n2 in complexity_graph.edges
+    #     if n1 in exhausted_motifs
+    #     and (n2 in exhausted_motifs or node_qtilde_map[n2] > 0.4)
+    # ]
+
+    # # Highlight edges between nodes with Q_tilde > 0.4
+    # highlight_edges = [
+    #     (n1, n2)
+    #     for n1, n2 in complexity_graph.edges
+    #     if node_qtilde_map[n1] > 0.4 and node_qtilde_map[n2] > 0.4
+    # ]
+
     print(
         f"Found {len(exhausted_motifs)} motifs with >= {n_visits_exhaustive} samples:"
     )
@@ -133,23 +237,41 @@ def main(
     nx.draw_networkx_edges(
         complexity_graph,
         pos,
-        width=0.5,
-        edge_color="lightgray",
+        width=1.0,
+        edge_color="gray",
         # node_size=node_sizes,
         node_size=node_size_scale,
         arrows=False,
         ax=ax,
     )
+    # nx.draw_networkx_edges(
+    #     complexity_graph,
+    #     pos,
+    #     width=0.5,
+    #     edgelist=highlight_edges,
+    #     edge_color="black",
+    #     node_size=node_sizes,
+    #     # node_size=node_size_scale,
+    #     arrows=False,
+    #     ax=ax,
+    # )
     nx.draw_networkx_nodes(
         complexity_graph,
         pos,
-        edgecolors="none",
+        edgecolors=node_edgecolors,
+        node_color=node_colors,
+        # node_color="gray",
         # node_size=node_sizes,
         node_size=node_size_scale,
-        node_color=node_colors,
-        linewidths=0.0,
+        linewidths=1.0,
         ax=ax,
     )
+
+    # ############################################
+    # # Label each node with its qhat value
+    # nx.draw_networkx_labels(complexity_graph, pos, labels=node_labels, font_size=6)
+    # ############################################
+
     plt.axis("off")
 
     # Plot a guide for the number of interactions in each level in the tree
@@ -173,6 +295,27 @@ def main(
     for depth in range(depth_min, depth_max + 1):
         plt.text(x_guide, yval, str(depth), ha="center", va="center")
         yval -= dy
+
+    # Plot colorbar for Q_tilde values
+    # Horizontal at the top-right of the plot
+    norm = colors.Normalize(vmin=0.0, vmax=node_qtildes.max())
+    sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+    sm.set_array([])
+
+    # Plot a colorbar at the top-right of the plot, inside the plot area
+    cbar = plt.colorbar(
+        sm,
+        ax=ax,
+        orientation="horizontal",
+        location="top",
+        shrink=0.2,
+        aspect=4,
+        ticks=[0.0, 0.25, 0.5],
+        format="%.2f",
+        panchor=(0.6, 0.75),
+    )
+    # Put the label below the colorbar
+    cbar.set_label(r"$\tilde{Q}$")
 
     # # Plot markers for a range of visit numbers for the terminal states (log-scale)
     # y_marker = y_max + dy / 2
@@ -206,6 +349,24 @@ def main(
         print(f"Writing to: {fname.resolve().absolute()}")
         plt.savefig(fname, dpi=dpi, bbox_inches="tight")
 
+    print("Saving network diagrams of the top Q-tilde values...")
+
+    for qtilde, motif in zip(top_qtildes, top_nodes):
+        fig, ax = plt.subplots(figsize=(2.0, 2.0))
+        plot_network(
+            *ctree.grammar.parse_genotype(motif, nonterminal_ok=True),
+            ax=ax,
+            **_network_kwargs,
+        )
+
+        plt.title(rf"$\tilde{{Q}} = {qtilde:.3f}$", fontsize=8)
+
+        if save:
+            today = datetime.now().strftime("%y%m%d")
+            fname = save_dir / f"{today}_motif_{motif}.{fmt}"
+            print(f"Writing to: {fname.resolve().absolute()}")
+            plt.savefig(fname, dpi=dpi, bbox_inches="tight")
+
 
 if __name__ == "__main__":
     # data_dir = Path("data/oscillation/mcts/mcts_bootstrap_long_231022_173227")
@@ -222,7 +383,8 @@ if __name__ == "__main__":
         "_mutationrate0.5_batch1_max_interactions15_exploration2.000"
     )
     # stats_csv = data_dir / "analysis/231107_circuit_pattern_tests_depth9.csv"
-    stats_csv = data_dir / "analysis/231108_circuit_pattern_tests_depth12.csv"
+    # stats_csv = data_dir / "analysis/231108_circuit_pattern_tests_depth12.csv"
+    stats_csv = data_dir / "analysis/231109022226_circuit_pattern_tests_depth12.csv"
 
     tree_gml = data_dir.joinpath(
         "backups/tree-28047823-dd31-4723-9dc1-f00ae6545013_2023-11-07_02-00-36.gml.gz"
@@ -232,16 +394,17 @@ if __name__ == "__main__":
     )
     suffix = "_5tf_step2500k_with_exhaustion"
 
-    save_dir = Path("figures/oscillation")
+    save_dir = Path("figures/oscillation/complexity_graphs")
+    save_dir.mkdir(exist_ok=True)
 
     main(
         stats_csv=stats_csv,
         tree_gml=tree_gml,
         config_json=config_json,
         n_visits_exhaustive=10_000,
-        # min_samples=100,
+        min_samples=10,
         suffix=suffix,
         save=True,
         save_dir=save_dir,
-        # fmt="pdf",
+        fmt="pdf",
     )

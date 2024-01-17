@@ -6,16 +6,22 @@ import pandas as pd
 from tqdm import tqdm
 
 
-def _get_best_row(
-    df: pd.DataFrame,
-    metric: str | Callable,
-):
-    if hasattr(metric, "__call__"):
-        values = metric(df)
-        best_idx = np.argmax(values)
-        return df.iloc[best_idx]
-    elif isinstance(metric, str):
-        return df.sort_values(metric, ascending=False).iloc[0]
+def _get_best_row(df: pd.DataFrame):
+    # Get row(s) with the highest total reward
+    best_rows = df.loc[df["reward"] == df["reward"].max()]
+    if len(best_rows) == 1:
+        return best_rows.iloc[0]
+    # Break ties by Q_hat
+    best_rows = best_rows.loc[best_rows["Q"] == best_rows["Q"].max()]
+    if len(best_rows) == 1:
+        return best_rows.iloc[0]
+    # Break ties by using the shortest genotype code
+    gen_len = best_rows["state"].str.len()
+    best_rows = best_rows.loc[gen_len == gen_len.min()]
+    if len(best_rows) == 1:
+        return best_rows.iloc[0]
+    # Break ties by alphabetically first genotype
+    return best_rows.sort_values("state").iloc[0]
 
 
 def main(
@@ -24,7 +30,6 @@ def main(
     save: bool = False,
     save_dir: Optional[Path] = None,
     suffix: str = "",
-    metric: str | Callable = "reward",
     progress: bool = False,
     has_true_Q: bool = True,
 ):
@@ -32,7 +37,7 @@ def main(
 
     best_oscillators = []
     visits = []
-    rewards = []
+    highest_rewards = []
     best_Qs = []
     cum_rewards = []
 
@@ -47,12 +52,12 @@ def main(
 
     for replicate, step in iterator:
         file = next(data_dir.joinpath(str(replicate)).glob(f"*_{step}_oscillators.csv"))
-        df = pd.read_csv(file)
-        cum_rewards.append(df["reward"].sum())
-        best_row = _get_best_row(df, metric=metric)
+        step_df = pd.read_csv(file)
+        cum_rewards.append(step_df["reward"].sum())
+        best_row = _get_best_row(step_df)
         best_oscillators.append(best_row["state"])
         visits.append(best_row["visits"])
-        rewards.append(best_row["reward"])
+        highest_rewards.append(best_row["reward"])
         best_Qs.append(best_row["Q"])
         if has_true_Q:
             true_Qs.append(best_row["true_Q"])
@@ -64,7 +69,7 @@ def main(
             "cum_reward": cum_rewards,
             "best_oscillator": best_oscillators,
             "visits": visits,
-            "reward": rewards,
+            "highest_reward": highest_rewards,
             "best_Q": best_Qs,
             **({"true_Q": true_Qs} if has_true_Q else {}),
         }
@@ -80,28 +85,27 @@ def main(
 if __name__ == "__main__":
     import numpy as np
 
-    suffix = "_3tf_short"
-    steps_to_sample = np.linspace(0, 100_000, 101, dtype=int)[1:].tolist()
+    # suffix = "_3tf_100k_iters"
+    # steps_to_sample = np.linspace(0, 100_000, 101, dtype=int)[1:].tolist()
+    # data_dir = Path(
+    #     "data/oscillation/mcts/mcts_bootstrap_short_exploration2.00_231103_140501"
+    #     "data/oscillation/mcts/sequential_bootstrap_short_231003_105603"
+    # )
 
-    data_dir = Path("data/oscillation/mcts/mcts_bootstrap_short_231002_221756")
-    has_true_Q = True
-
-    # data_dir = Path("data/oscillation/mcts/sequential_bootstrap_short_231003_105603")
-    # has_true_Q = False
-
-    # steps_to_sample = np.linspace(0, 5_000_000, 51, dtype=int)[1:].tolist()
-    # suffix = "_3tf_long"
-    # data_dir = Path("data/oscillation/mcts/bootstrap_long_230928_000832/")
-    # data_dir = Path("data/oscillation/mcts/sequential_long_230929_170434/")
+    suffix = "_3tf_1mil_iters"
+    data_dir = Path(
+        "data/oscillation/mcts/mcts_bootstrap_1mil_iters_exploration2.00_231204_142301"
+    )
+    steps_to_sample = np.linspace(0, 1_000_000, 101, dtype=int)[1:].tolist()
 
     save_dir = data_dir
 
     main(
         data_dir=data_dir,
+        steps_to_sample=steps_to_sample,
         save=True,
         save_dir=save_dir,
         suffix=suffix,
-        steps_to_sample=steps_to_sample,
         progress=True,
-        has_true_Q=has_true_Q,
+        # has_true_Q=False,
     )

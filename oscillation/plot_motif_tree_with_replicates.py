@@ -56,6 +56,7 @@ def main(
     figsize: tuple[float | int] = (9.0, 5.0),
     node_size_scale: float = 120.0,
     guide_position: Literal["left", "right"] = "left",
+    invert_xaxis: bool = False,
     save: bool = False,
     save_dir: Optional[Path] = None,
     fmt: str = "png",
@@ -112,6 +113,8 @@ def main(
         exh_df["is_motif"] = (
             exh_df["significant"] & exh_df["overrepresented"] & exh_df["sufficient"]
         )
+        n_motifs = exh_df["is_motif"].sum()
+        print(f"Exhaustive search found {n_motifs} motifs")
 
     n_reps_found_successful_circuit = Counter()
     if nprocs == 1:
@@ -229,7 +232,7 @@ def main(
 
     # Node size depends on Q_tilde
     node_qtildes = np.array([ctree.graph.nodes[n]["Q_tilde"] for n in nodelist])
-    node_sizes = 5 + node_size_scale * node_qtildes
+    node_sizes = 1 + node_size_scale * node_qtildes
 
     # # Node size is based on P(motif discovery) for all motifs in exhaustive search
     # searched_patterns = set(agg_stats_df.index.values)
@@ -251,9 +254,21 @@ def main(
     # node_q_tildes = np.array([ctree.graph.nodes[n]["Q_tilde"] for n in nodelist])
     # node_colors = cmap(node_q_tildes / node_q_tildes.max())
 
-    faint_nodes = list(not_motifs)
+    faint_nodes = []
+    faint_node_p_discoveries = []
+    for i, nt in enumerate(complexity_graph.nodes):
+        faint_nodes.append(nt)
+        if nt in searched_patterns:
+            p_discovery = agg_stats_df.loc[nt, "pct_reps_with_motif"]
+        else:
+            p_discovery = 0.0
+        faint_node_p_discoveries.append(p_discovery)
+
+    faint_node_colors = cmap(faint_node_p_discoveries)
+
+    # faint_nodes = list(not_motifs)
     faint_node_sizes = np.array([ctree.graph.nodes[n]["Q_tilde"] for n in faint_nodes])
-    faint_node_sizes = 5 + node_size_scale * faint_node_sizes
+    faint_node_sizes = 1 + node_size_scale * faint_node_sizes
 
     # # Nodes that don't meet the overrepresentation requirement to be a motif are
     # # drawn faintly
@@ -291,18 +306,18 @@ def main(
     # Highlight edges between motifs with high discovery rate
     highlight_edges = []
     for u, v in complexity_graph.edges:
-        if u in exh_motifs and v in exh_motifs:
-            u_p_discovery = results_df.loc[
-                results_df["nonterminal"] == u, "P_discovery"
-            ].item()
-            v_p_discovery = results_df.loc[
-                results_df["nonterminal"] == v, "P_discovery"
-            ].item()
-            if (
-                u_p_discovery > p_discovery_threshold
-                and v_p_discovery > p_discovery_threshold
-            ):
-                highlight_edges.append((u, v))
+        # if u in exh_motifs and v in exh_motifs:
+        u_p_discovery = results_df.loc[
+            results_df["nonterminal"] == u, "P_discovery"
+        ].item()
+        v_p_discovery = results_df.loc[
+            results_df["nonterminal"] == v, "P_discovery"
+        ].item()
+        if (
+            u_p_discovery > p_discovery_threshold
+            and v_p_discovery > p_discovery_threshold
+        ):
+            highlight_edges.append((u, v))
 
     highlighted = set(chain.from_iterable(highlight_edges))
     high_P_discovery = set(
@@ -329,7 +344,8 @@ def main(
         nodelist=faint_nodes,
         edgecolors="none",
         node_size=faint_node_sizes,
-        node_color="silver",
+        # node_color="silver",
+        node_color=faint_node_colors,
         linewidths=0.5,
         ax=ax,
     )
@@ -338,7 +354,7 @@ def main(
         pos,
         nodelist=nodelist,
         edgecolors="black",
-        linewidths=0.5,
+        linewidths=1.0,
         node_size=node_sizes,
         node_color=node_colors,
         ax=ax,
@@ -354,6 +370,7 @@ def main(
         x_guide = x_min - 0.05 * (x_max - x_min)
     else:
         raise ValueError(f"Invalid position for guide labels: {guide_position}")
+    dx = 0.05 * (x_max - x_min)
 
     level_yvals = sorted(set(y for x, y in pos.values()), reverse=True)
     min_depth = min(c.count("_") for c in complexity_graph.nodes) + 1
@@ -363,24 +380,81 @@ def main(
         plt.text(x_guide, y, i + min_depth, ha="center", va="center")
 
     # Plot markers for a range of Q_tilde values
+    marker_qtildes = np.array([0.0, 0.1, 0.2, 0.3, 0.4])
+    marker_sizes = 1 + node_size_scale * marker_qtildes
+    x_markers = x_min + dx * (4 + np.arange(marker_qtildes.size))
     y_marker = level_yvals[0] + dy / 2
-    dx = 0.05 * (x_max - x_min)
-    x_marker = x_min + 4 * dx
     plt.text(
-        x_marker + 3 * dx, y_marker + dy / 3, r"$\tilde{Q}$", ha="center", va="center"
+        np.median(x_markers),
+        y_marker + dy / 2,
+        r"$Q_\mathrm{motif}$",
+        ha="center",
+        va="center",
     )
-    for qtilde in np.linspace(0.0, 0.4, 5):
-        x_marker += dx
-        size = 5 + node_size_scale * qtilde
-        plt.scatter(x_marker, y_marker, s=size, color="dimgray", edgecolors="none")
+    marker_pos = {i: (x, y_marker) for i, x in enumerate(x_markers)}
+    G_marker = nx.Graph()
+    G_marker.add_nodes_from(marker_pos.keys())
+
+    nx.draw_networkx_nodes(
+        G_marker,
+        marker_pos,
+        node_size=marker_sizes,
+        node_color="dimgray",
+        edgecolors="k",
+        linewidths=1.0,
+    )
+
+    for i, qtilde in enumerate(marker_qtildes):
+        # plt.scatter(x_markers[i], y_marker, s=marker_sizes[i], color="dimgray", edgecolors="none")
         plt.text(
-            x_marker,
+            x_markers[i],
             y_marker - dy / 3,
             f"{qtilde:.1f}",
             ha="center",
             va="center",
             fontsize="small",
         )
+
+    # Plot markers to show that a black outline indicates that the node is a true motif
+    x_motif_example = x_max - 6 * dx
+    y_motif_example = level_yvals[0] + dy / 2
+    pos_motif_example = {
+        0: (x_motif_example - dx / 2, y_motif_example),
+        1: (x_motif_example + dx / 2, y_motif_example),
+    }
+    G_motif_example = nx.Graph()
+    G_motif_example.add_nodes_from(pos_motif_example.keys())
+    nx.draw_networkx_nodes(
+        G_motif_example,
+        pos_motif_example,
+        node_size=marker_sizes[marker_sizes.size // 2],
+        node_color="dimgray",
+        edgecolors=("none", "k"),
+        linewidths=1.0,
+    )
+    plt.text(
+        x_motif_example,
+        y_marker + dy / 2,
+        "True motif",
+        ha="center",
+        va="center",
+    )
+    plt.text(
+        x_motif_example - dx / 2,
+        y_motif_example - dy / 3,
+        "No",
+        ha="center",
+        va="center",
+        fontsize="small",
+    )
+    plt.text(
+        x_motif_example + dx / 2,
+        y_motif_example - dy / 3,
+        "Yes",
+        ha="center",
+        va="center",
+        fontsize="small",
+    )
 
     # Plot colorbar for P(motif discovery) = coolwarm matplotlib colormap
     # Horizontal at the top-right of the plot
@@ -401,7 +475,11 @@ def main(
         panchor=(0.6, 0.75),
     )
     # Put the label below the colorbar
-    cbar.set_label("Motif discovery rate")
+    cbar.set_label("P(Assembly motif)")
+
+    # Optionally flip the x-axis direction for aesthetic reasons
+    if invert_xaxis:
+        plt.gca().invert_xaxis()
 
     if save:
         today = datetime.now().strftime("%y%m%d")
@@ -447,7 +525,8 @@ def main(
 if __name__ == "__main__":
     exhaustive_results_csv = Path("data/oscillation/230717_motifs.csv")
     exhaustive_stats_csv = Path(
-        "data/oscillation/231101_circuit_pattern_tests_exhaustive_search_depth9.csv"
+        "data/oscillation/231119_circuit_pattern_tests_exhaustive_search.csv"
+        # "data/oscillation/231101_circuit_pattern_tests_exhaustive_search_depth9.csv"
         # "data/oscillation/231030_circuit_pattern_tests_exhaustive_search_depth4.csv"
     )
 
@@ -478,7 +557,9 @@ if __name__ == "__main__":
         exhaustive_results_csv=exhaustive_results_csv,
         exhaustive_stats_csv=exhaustive_stats_csv,
         n_exhaustive_samples=10_000,
-        p_discovery_threshold=0.9,
+        p_discovery_threshold=0.8,
+        node_size_scale=150,
+        # invert_xaxis=True,
         step=step,
         nprocs=12,
         suffix=suffix,

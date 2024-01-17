@@ -8,21 +8,33 @@ import warnings
 
 def main(
     data_csv: Path,
+    bins=100,
+    log_scale: bool = False,
+    xlim: tuple = None,
+    palette: str = "muted",
+    legend_title: str = "Motif combination",
+    figsize: tuple = (5, 3),
     save: bool = False,
     save_dir: Path = None,
-    figsize: tuple = (5, 3),
+    suffix: str = "",
     fmt: str = "png",
     dpi: int = 300,
-    palette: str = "muted",
-    multiple: str = "fill",
-    legend_title: str = "Motif combination",
-    bins=100,
 ):
     data = pd.read_csv(data_csv)
     data["step"] = data["step"].astype(int)
-    data = pd.melt(
-        data, id_vars=["step", "replicate"], var_name="motifs", value_name="n_samples"
-    )
+
+    kw = {}
+    if "motifs" not in data.columns:
+        data = pd.melt(
+            data,
+            id_vars=["step", "replicate"],
+            var_name="motifs",
+            value_name="n_samples",
+        )
+        kw["weights"] = "n_samples"
+
+    if log_scale:
+        data = data.loc[data["step"] > 0]
 
     # Filter warnings from Seaborn
     warnings.filterwarnings(action="ignore", category=FutureWarning)
@@ -31,12 +43,17 @@ def main(
         data=data,
         x="step",
         hue="motifs",
-        weights="n_samples",
         bins=bins,
         palette=palette,
-        multiple=multiple,
-        ec=None,
+        multiple="fill",
+        log_scale=log_scale,
+        element="step",
+        ec="none",
+        # ec="gray",
+        # lw=0.25,
+        **kw,
     )
+    plt.xlim(xlim)
 
     sns.move_legend(p, bbox_to_anchor=(1.05, 1), loc="upper left")
     p.legend_.set_title(legend_title)
@@ -48,46 +65,34 @@ def main(
 
     if save:
         today = datetime.today().strftime("%y%m%d")
-        fpath = Path(save_dir).joinpath(f"{today}_sampling_proportions.{fmt}")
+        fpath = Path(save_dir).joinpath(f"{today}_sampling_proportions{suffix}.{fmt}")
         print(f"Writing to: {fpath.resolve().absolute()}")
         plt.savefig(fpath, dpi=dpi)
 
 
 if __name__ == "__main__":
-    bins = 100
-    # data_csv = Path(
-    #     "data/oscillation/mcts/mcts_bootstrap_short_231002_221756"
-    #     "/231003_motif_counts.csv"
-    # )
-    # data_csv = Path(
-    #     "data/oscillation/mcts/mcts_bootstrap_short_231020_175449"
-    #     "/231102_motif_counts.csv"
-    # )
-    # data_csv = Path(
-    #     "data/oscillation/mcts/mcts_bootstrap_short_231102_111706"
-    #     "/231102_motif_counts.csv"
-    # )
     data_csv = Path(
         "data/oscillation/mcts/mcts_bootstrap_short_exploration2.00_231103_140501"
         "/231103_motif_counts.csv"
     )
+    suffix = "_100k_iters"
 
-    # bins = 50
     # data_csv = Path(
-    #     "data/oscillation/mcts/mcts_bootstrap_long_231022_173227"
-    #     "/231102_motif_counts.csv"
+    #     "data/oscillation/mcts/mcts_bootstrap_1mil_iters_exploration2.00_231204_142301"
+    #     "/231207_motif_counts.csv"
     # )
-
-    # names = ["(none)", "AI", "Rep", "AI+Rep"]
+    # suffix = "_1mil_iters"
 
     save_dir = Path("figures/oscillation/")
 
     main(
         data_csv=data_csv,
-        save=True,
-        save_dir=save_dir,
-        # fmt="pdf",
-        bins=bins,
+        # log_scale=True,
         palette="deep",
         legend_title="Motifs",
+        xlim=(10, None),
+        suffix=suffix,
+        save=True,
+        save_dir=save_dir,
+        fmt="pdf",
     )

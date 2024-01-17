@@ -267,20 +267,16 @@ if __name__ == "__main__":
 
     now = datetime.now().strftime("%y%m%d_%H%M%S")
 
-    exhaustive_results_csv = Path("data/oscillation/230717_motifs.csv")
+    exhaustive_results_csv = Path("data/oscillation/231102_exhaustive_results.csv")
 
     save_dir = Path(
-        f"data/oscillation/mcts/mcts_bootstrap_short"
+        f"data/oscillation/mcts/mcts_bootstrap_1mil_iters"
         f"_exploration{exploration_constant:.2f}_{now}"
     )
     log_dir = Path(
-        f"logs/oscillation/mcts/mcts_bootstrap_short"
+        f"logs/oscillation/mcts/mcts_bootstrap_1mil_iters"
         f"_exploration{exploration_constant:.2f}_{now}"
     )
-
-    # save_dir = Path(f"data/oscillation/mcts/mcts_bootstrap_long_{now}")
-    # log_dir = Path(f"logs/oscillation/mcts/mcts_bootstrap_long_{now}")
-
     save_dir.mkdir(exist_ok=True)
     log_dir.mkdir(exist_ok=True)
 
@@ -292,9 +288,9 @@ if __name__ == "__main__":
         master_seed=2023,
         # n_workers=1,
         n_workers=12,
-        n_replicates=50,
-        n_steps=100_000,
-        save_every=1_000,
+        n_replicates=12,
+        n_steps=1_000_000,
+        save_every=10_000,
         # n_replicates=12,
         # n_steps=5_000_000,
         # save_every=100_000,

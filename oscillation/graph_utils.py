@@ -1,7 +1,9 @@
+from itertools import combinations
 from circuitree import CircuitGrammar, CircuiTree
 from circuitree.models import SimpleNetworkGrammar
 from functools import partial
-from typing import Any, Container, Iterable, Mapping, Optional
+from typing import Any, Container, Generator, Iterable, Mapping, Optional
+from more_itertools import powerset
 import networkx as nx
 from networkx.drawing.nx_agraph import graphviz_layout
 import numpy as np
@@ -138,11 +140,15 @@ def prune_branches_inplace(
         bad_leaves = set(n for n in tree.nodes if tree.out_degree(n) == 0) - good_leaves
 
 
-def n_interactions(genotype: str) -> int:
+def simplenetwork_n_interactions(genotype_or_pattern: str) -> int:
     """Returns the number of interactions in a SimpleNetworkGrammar genotype."""
-    interactions_joined = genotype.split("::")[1]
-    if interactions_joined:
-        return genotype.count("_") + 1
+    if "::" in genotype_or_pattern:
+        pattern = genotype_or_pattern.split("::")[1]
+    else:
+        pattern = genotype_or_pattern
+
+    if pattern:
+        return genotype_or_pattern.count("_") + 1
     else:
         return 0
 
@@ -170,7 +176,9 @@ def simplenetwork_complexity_layout(
     # For each connected component, fix y values based on circuit complexity
     components = sorted(components, key=len, reverse=True)
     smallest_circuits = [min(c, key=len) for c in components]
-    min_depth_per_component = np.array([n_interactions(n) for n in smallest_circuits])
+    min_depth_per_component = np.array(
+        [simplenetwork_n_interactions(n) for n in smallest_circuits]
+    )
     depth_bias = dy * (min_depth_per_component - min_depth_per_component.min())
     for component, ybias in zip(components, depth_bias):
         for node in component:
@@ -199,6 +207,116 @@ def simplenetwork_complexity_layout(
         prev_x_max = xvals[cmask].max()
     pos = dict(zip(nodes, zip(xvals, yvals)))
     return pos
+
+
+def simplenetwork_adjacency_matrix(
+    state: str,
+    grammar: SimpleNetworkGrammar,
+    directed: bool = True,
+    signed: bool = True,
+) -> np.ndarray:
+    """Returns an adjacency matrix representation of a SimpleNetwork circuit.
+    Excludes self-loops."""
+
+    # Get the interactions
+    components, activations, inhibitions = grammar.parse_genotype(state)
+
+    # Make a symmetric, unweighted adjacency matrix
+    n_components = len(components)
+    adjacency = np.zeros((n_components, n_components), dtype=int)
+    for i, j in activations.tolist():
+        if i != j:
+            adjacency[i, j] = 1
+            if not directed:
+                adjacency[j, i] = 1
+
+    inh_weight = -1 if signed else 1
+    for i, j in inhibitions.tolist():
+        if i != j:
+            adjacency[i, j] = inh_weight
+            if not directed:
+                adjacency[j, i] = inh_weight
+    return adjacency
+
+
+def simplenetwork_as_undirected_graph(
+    state: str, grammar: SimpleNetworkGrammar
+) -> nx.DiGraph:
+    """Returns an undirected graph representation of a SimpleNetwork circuit.
+    Excludes self-loops."""
+
+    adjacency = simplenetwork_adjacency_matrix(
+        state, grammar, directed=False, signed=False
+    )
+    graph = nx.from_numpy_array(adjacency, create_using=nx.Graph)
+
+    # Remove nodes with no connections
+    graph.remove_nodes_from(list(nx.isolates(graph)))
+
+    return graph
+
+
+def simplenetwork_negative_feedback_loops(genotype: str, grammar: SimpleNetworkGrammar):
+    components, activations, inhibitions = grammar.parse_genotype(genotype)
+
+    # Make a directed graph of the interactions, storing the +/- weights
+    circuit = nx.DiGraph()
+    circuit.add_nodes_from(components)
+    for i, j in activations:
+        if i != j:
+            circuit.add_edge(i, j, weight=0)
+    for i, j in inhibitions:
+        if i != j:
+            circuit.add_edge(i, j, weight=1)
+
+    # Find all negative feedback loops by finding all cycles in the graph
+    # and then checking if they are negative feedback loops
+    edge_weights = nx.get_edge_attributes(circuit, "weight")
+    negative_feedback_loops = []
+    for cycle in nx.simple_cycles(circuit):
+        edges = list(zip(cycle, cycle[1:] + cycle[:1]))
+        n_repressions = sum(edge_weights[e] for e in edges)
+
+        # NFL will have an odd number of repressions
+        if n_repressions % 2 == 1:
+            negative_feedback_loops.append((n_repressions, cycle))
+
+    return negative_feedback_loops
+
+
+def partition_cheeger_contstant(G: nx.Graph, partition: set[Any]) -> float:
+    return nx.algorithms.cuts.conductance(G, partition, weight=None)
+
+
+def all_minor_subgraphs(G: nx.Graph) -> Generator[set[Any], None, None]:
+    """Returns a generator that iterates through all subgraphs {S} of the
+    connected graph G that are of size |S| <= |G| / 2"""
+    if not nx.is_connected(G):
+        raise ValueError("G must be connected.")
+    if isinstance(G, nx.DiGraph):
+        raise ValueError("G must be undirected.")
+
+    nodes = list(G.nodes)
+    max_S_vol = len(nodes) // 2
+    node_combinations = powerset(nodes)
+    _ = next(node_combinations)  # Skip the empty set
+    for S in node_combinations:
+        if len(S) <= max_S_vol:
+            yield S
+
+
+def cheeger_constant(G: nx.Graph) -> float:
+    """Finds the conductance of the graph G by iterating through all possible cuts
+    and returning the minimum conductance."""
+    return min(partition_cheeger_contstant(G, S) for S in all_minor_subgraphs(G))
+
+
+def simplenetwork_cheeger_constant(
+    circuit: str, grammar: SimpleNetworkGrammar
+) -> float:
+    """Finds the conductance of the graph that describes the given circuit."""
+    G = simplenetwork_as_undirected_graph(circuit, grammar)
+    return cheeger_constant(G)
 
 
 ##########
