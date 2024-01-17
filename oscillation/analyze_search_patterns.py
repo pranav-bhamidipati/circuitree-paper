@@ -28,24 +28,16 @@ def main(
     save_dir: Path = None,
     progress: bool = False,
 ):
-    # Hack around a dumb bug in the original code for grammar objects. Attributes that
-    # are not supposed to be serialized to JSON are stored in the object attribute
-    # "_non_serializable_attrs". Originally, this attribute itself was accidentally
-    # serialized. This is a hack to remove it before loading.
-    search_graph_json = Path(search_graph_json)
-    with open(search_graph_json, "r") as f:
-        attrs = json.load(f)
-        attrs["grammar"].pop("_non_serializable_attrs", None)
-    search_graph_json = search_graph_json.with_suffix(".json.tmp")
-    with open(search_graph_json, "w") as f:
-        json.dump(attrs, f)
-
-    tree = OscillationTree.from_file(
-        Path(search_graph_gml), search_graph_json, grammar_cls=SimpleNetworkGrammar
+    print(
+        "Loading search graph from file. This can take many minutes for large graphs..."
     )
-    search_graph_json.unlink()
+    tree = OscillationTree.from_file(
+        Path(search_graph_gml),
+        Path(search_graph_json),
+        grammar_cls=SimpleNetworkGrammar,
+    )
 
-    # Identify successful circuits
+    print("Identifying successful oscillators...")
     successful_circuits = set(
         n
         for n in tree.graph.nodes
@@ -66,7 +58,9 @@ def main(
                 pattern_complexity[pattern] = depth
     patterns = list(pattern_complexity.keys())
 
-    print(f"Computing frequencies for {len(patterns)} patterns...")
+    print(
+        f"Computing frequencies for {len(patterns)} patterns up to depth {to_depth}..."
+    )
 
     null_kwargs = {}
     succ_kwargs = {}
@@ -121,14 +115,17 @@ if __name__ == "__main__":
     graph_dir = Path(
         # "data/aws_exhaustion_exploration2.00"
         "data/oscillation/mcts"
-        "/231104-19-32-24_5tf_exhaustion_mutationrate0.5_batch1_max_interactions15_exploration2.000"
+        # "/231104-19-32-24_5tf_exhaustion_mutationrate0.5_batch1_max_interactions15_exploration2.000"
+        "/231114-06-48-21_5tf_exhaustion_mutationrate0.5_batch1_max_interactions15_exploration2.000"
         "/backups"
     )
     graph_gml = graph_dir.joinpath(
-        "tree-28047823-dd31-4723-9dc1-f00ae6545013_2023-11-07_02-00-36.gml.gz"
+        # "tree-28047823-dd31-4723-9dc1-f00ae6545013_2023-11-07_02-00-36.gml.gz"
+        "tree-42e2e9e5-db08-4d22-bd50-81e96e36c5a4_2023-11-15_13-44-19.gml.gz"
     )
     graph_json = graph_dir.joinpath(
-        "tree-28047823-dd31-4723-9dc1-f00ae6545013_2023-11-04_12-32-24.json"
+        # "tree-28047823-dd31-4723-9dc1-f00ae6545013_2023-11-04_12-32-24.json"
+        "tree-42e2e9e5-db08-4d22-bd50-81e96e36c5a4_2023-11-13_23-48-21.json"
     )
 
     save_dir = graph_dir.parent.joinpath("analysis")
@@ -137,15 +134,16 @@ if __name__ == "__main__":
     main(
         search_graph_gml=graph_gml,
         search_graph_json=graph_json,
-        # to_depth=9,
-        to_depth=12,
+        to_depth=9,
+        # to_depth=12,
         # sample_size=500,
-        sample_size=500_000,
+        sample_size=100_000,
+        # sample_size=500_000,
         sampling_method="rejection",
         nprocs=186,
         nprocs_testing=186,
         null_chunksize=100,
-        succ_chunksize=5,
+        succ_chunksize=1,
         max_iter=10_000_000_000,
         # null_chunksize=100,
         # succ_chunksize=20,

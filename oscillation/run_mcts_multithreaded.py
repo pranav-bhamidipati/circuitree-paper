@@ -26,8 +26,10 @@ def main(
     progress_every: int = 10,
     backup_every: int = 3600,
     n_tree_backups: int = 1000,
+    cache_maxsize: int = 2**20,
     logger=None,
     dry_run: bool = False,
+    seed: Optional[int] = None,
 ):
     if threads == 0:
         run_in_main_thread = True
@@ -47,7 +49,10 @@ def main(
         threads=threads,
         logger=logger,
         batch_size=batch_size,
+        cache_maxsize=cache_maxsize,
     )
+    if seed is not None:
+        mtree_kw["seed"] = seed
 
     mtree = BatchedOscillationTree(**mtree_kw)
 
@@ -160,11 +165,12 @@ if __name__ == "__main__":
         backup_dir=backup_dir,
         batch_size=batch_size,
         exploration_constant=exploration_constant,
+        # cache_maxsize=1,
         # threads=0,
-        # threads=2,
+        # threads=3,
         # threads=30,
-        threads=500,
-        n_steps_per_thread=5_000,
+        threads=1_000,
+        n_steps_per_thread=2_000,
         # dry_run=True,
         # progress_every=1,
         progress_every=10,
@@ -174,4 +180,5 @@ if __name__ == "__main__":
         # callback_every=1,
         callback_every=10,
         # callback_every=20,
+        seed=2026,
     )

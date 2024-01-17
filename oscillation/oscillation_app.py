@@ -49,6 +49,7 @@ def run_ssa_no_time_limit(
     # Remove the mutated component from the state string
     if mutated_component != "(none)":
         components, interactions_joined = state.strip("*").split("::")
+        where_mutated = components.find(mutated_component)
         components = components.replace(mutated_component, "")
         interactions = [
             ixn
@@ -60,12 +61,15 @@ def run_ssa_no_time_limit(
         task_logger.info(
             f"Removing component {mutated_component}:  {state} -> {new_state}"
         )
+        sim_state = new_state
+        prots0 = prots0[:where_mutated] + prots0[where_mutated + 1 :]
+    else:
+        sim_state = state
 
     kwargs = dict(
         seed=seed,
         prots0=prots0,
         params=params,
-        state=state,
         dt=dt,
         nt=nt,
         max_iter_per_timestep=INT64_MAXVAL,  # no limit on reaction rate
@@ -75,7 +79,7 @@ def run_ssa_no_time_limit(
     )
 
     # Run the simulation
-    prots_t, autocorr_min, sim_time = _run_ssa(**kwargs)
+    prots_t, autocorr_min, sim_time = _run_ssa(state=sim_state, **kwargs)
     autocorr_min = float(autocorr_min)
     sim_time = float(sim_time)
     kwargs["sim_time"] = sim_time
@@ -92,9 +96,16 @@ def run_ssa_no_time_limit(
     # Save data for any oscillating simulations
     oscillated = -autocorr_min > autocorr_threshold
     if oscillated:
-        task_logger.info(f"Oscillation detected, saving data for {seed=}, {state=}.")
+        task_logger.info(
+            f"Oscillation detected, saving data for {param_index=}, {state=}."
+        )
         save_results.delay(
-            prefix="osc_", param_index=param_index, autocorr_min=autocorr_min, **kwargs
+            prefix="osc_",
+            param_index=param_index,
+            autocorr_min=autocorr_min,
+            state=state,
+            sim_state=sim_state,
+            **kwargs,
         )
 
     return autocorr_min, (False, sim_time)
@@ -137,6 +148,7 @@ def save_results(
     param_index: int,
     seed: int,
     state: str,
+    sim_state: str,
     dt: float,
     nt: int,
     max_iter_per_timestep: int,
@@ -160,6 +172,7 @@ def save_results(
         f.attrs["param_index"] = param_index
         f.attrs["autocorr_min"] = autocorr_min
         f.attrs["state"] = state
+        f.attrs["sim_state"] = sim_state
         f.attrs["seed"] = seed
         f.attrs["dt"] = dt
         f.attrs["nt"] = nt

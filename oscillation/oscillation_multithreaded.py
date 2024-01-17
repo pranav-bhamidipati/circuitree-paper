@@ -84,6 +84,7 @@ class MultithreadedOscillationTree(ParallelNetworkTree):
         self,
         *,
         save_dir: str | Path,
+        n_exhausted: Optional[int] = None,
         success_threshold: float = 0.01,
         autocorr_threshold: float = 0.4,
         dt: float = 20.0,
@@ -126,6 +127,10 @@ class MultithreadedOscillationTree(ParallelNetworkTree):
 
         self.database = database
         self.n_param_sets: int = self.database.hlen("parameter_table")
+
+        # Set the number of times a terminal node must be visited before it is
+        # considered exhausted. Defaults to the number of parameter sets in the database.
+        self.n_exhausted = n_exhausted or self.n_param_sets
 
         self.logger = logger or task_logger
 
@@ -202,7 +207,7 @@ class MultithreadedOscillationTree(ParallelNetworkTree):
 
         # Check for exhaustion. A terminal state can become exhausted if it has been
         # simulated enough times to have sampled all parameter sets.
-        if self.graph.nodes[node].get("visits", 0) >= self.n_param_sets - 1:
+        if self.graph.nodes[node].get("visits", 0) >= self.n_exhausted - 1:
             self.mark_as_exhausted(node)
 
         return selection_path
