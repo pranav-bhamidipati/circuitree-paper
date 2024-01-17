@@ -156,25 +156,25 @@ def main(
     print(
         f"Done! {len(genotypes)} simulations completed for KD mutants of:\n\t{genotype}\n"
     )
-    print("Found the following results (mean +/- std)...")
-    for i, kd_tf in enumerate(knockdown_tfs):
-        print(f"Knockdown: {kd_tf}")
-        print("=" * len(f"Knockdown: {kd_tf}"))
-        for j, kd_coeff in enumerate(knockdown_coeffs):
-            oscillated_mask = acf_minima[i, j] < ACF_threshold
-            if oscillated_mask.sum() == 0:
-                print("\tNo oscillations")
-            else:
-                print(f"\t{oscillated_mask.sum()} / {n_replicates} oscillated")
-                acf_min_mean = acf_minima[i, j][oscillated_mask].mean()
-                acf_min_std = acf_minima[i, j][oscillated_mask].std()
-                freq_mean = frequencies[i, j][oscillated_mask].mean()
-                freq_std = frequencies[i, j][oscillated_mask].std()
-                print(f"KD coeff: {kd_coeff:.2f}")
-                print(
-                    f"\tACF min = {acf_min_mean:.3f} +/- {acf_min_std:.3f}, freq (1/min) = {freq_mean:.3f} +/- {freq_std:.3f}"
-                )
-        print("\n")
+    # print("Found the following results (mean +/- std)...")
+    # for i, kd_tf in enumerate(knockdown_tfs):
+    #     print(f"Knockdown: {kd_tf}")
+    #     print("=" * len(f"Knockdown: {kd_tf}"))
+    #     for j, kd_coeff in enumerate(knockdown_coeffs):
+    #         oscillated_mask = acf_minima[i, j] < ACF_threshold
+    #         if oscillated_mask.sum() == 0:
+    #             print("\tNo oscillations")
+    #         else:
+    #             print(f"\t{oscillated_mask.sum()} / {n_replicates} oscillated")
+    #             acf_min_mean = acf_minima[i, j][oscillated_mask].mean()
+    #             acf_min_std = acf_minima[i, j][oscillated_mask].std()
+    #             freq_mean = frequencies[i, j][oscillated_mask].mean()
+    #             freq_std = frequencies[i, j][oscillated_mask].std()
+    #             print(f"KD coeff: {kd_coeff:.2f}")
+    #             print(
+    #                 f"\tACF min = {acf_min_mean:.3f} +/- {acf_min_std:.3f}, freq (1/min) = {freq_mean:.3f} +/- {freq_std:.3f}"
+    #             )
+    #     print("\n")
 
     if save:
         today = datetime.today().strftime("%y%m%d")
