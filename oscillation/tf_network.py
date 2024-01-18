@@ -5,6 +5,7 @@ from scipy.signal import correlate
 from typing import Optional, Iterable, Sequence
 
 from gillespie import (
+    MEAN_INITIAL_POPULATION,
     GillespieSSA,
     make_matrices_for_ssa,
     SAMPLING_RANGES,
@@ -342,6 +343,33 @@ class TFNetworkModel:
             knockdown_coeff=knockdown_coeff,
             nchunks=nchunks,
             seed=seed,
+            maxiter_ok=maxiter_ok,
+        )
+
+        # Get presence and frequency of oscillation
+        prots_t = y_t[..., self.m : self.m * 2]
+        where_minimum, frequency, acf_minimum = self.get_acf_minima_and_results(
+            self.t, prots_t, freqs=True, indices=True, abs=False
+        )
+        return y_t, where_minimum, frequency, acf_minimum
+
+    def run_with_params_perturbation_and_get_results(
+        self,
+        params: np.ndarray,
+        sigma_params: float,
+        init_mean: float = MEAN_INITIAL_POPULATION,
+        maxiter_ok: bool = True,
+        nchunks: int = 1,
+    ) -> tuple[np.ndarray, float]:
+        """Run an SSA with a (partial or complete) knockdown of one of the TFs
+        and return the results."""
+        pop0 = self.ssa.draw_random_initial(init_mean=init_mean)
+        y_t = self.ssa.run_with_params_in_chunks_with_perturbation(
+            # pop0, params, sigma_params, nchunks=1, seed=None,
+            pop0,
+            params,
+            sigma_params,
+            nchunks=nchunks,
             maxiter_ok=maxiter_ok,
         )
 

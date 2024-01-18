@@ -765,7 +765,7 @@ def get_params_perturbed(
     params, sigma_params, m, param_ranges=None, rg: np.random.Generator = None
 ):
     if np.isclose(sigma_params, 0.0):
-        return np.tile(params, (m, 1))
+        return rg, np.tile(params, (m, 1))
 
     if param_ranges is None:
         param_ranges = SAMPLING_RANGES
@@ -1395,6 +1395,12 @@ class GillespieSSA:
     def package_params_for_ssa(self, params):
         """ """
         return package_params_for_ssa(params)
+
+    def draw_random_initial(self, init_mean=None):
+        """ """
+        init_mean = self.init_mean if init_mean is None else init_mean
+        self.rg, pop0 = draw_random_initial(self.rg, self.m, self.a, self.r, init_mean)
+        return pop0
 
     def draw_random_initial_and_params(self, init_mean=None):
         init_mean = self.init_mean if init_mean is None else init_mean
