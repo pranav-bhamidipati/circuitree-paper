@@ -1,6 +1,5 @@
-from collections import Counter
 from datetime import datetime
-from functools import partial
+from math import floor
 from pathlib import Path
 from typing import Optional
 import matplotlib.pyplot as plt
@@ -10,11 +9,7 @@ import pandas as pd
 import seaborn as sns
 import warnings
 
-from scipy.sparse import csr_matrix
 from tqdm import tqdm
-from graph_utils import compute_Q_tilde
-
-from oscillation import OscillationTree
 
 
 def get_complexity(state: str) -> int:
@@ -75,48 +70,73 @@ def main(
         for j, step in enumerate(steps):
             csv = next(replicate_dir.glob(f"*_{step}_oscillators.csv"))
             sample_df = pd.read_csv(csv)
-            where_osc = states.isin(sample_df["state"].loc[sample_df["Q"] >= Qthresh])
-            state_found[i, j] = where_osc
+            discovered_idx = states.isin(
+                sample_df["state"].loc[sample_df["Q"] >= Qthresh]
+            )
+            state_found[i, j] = discovered_idx
 
-    osc_found = state_found[:, :, oscillators.index]
-    p_reps_with_osc = osc_found.mean(axis=0).T
-    osc_df = pd.DataFrame(p_reps_with_osc, index=oscillators, columns=steps)
-    osc_df.index.name = "oscillator"
-    osc_df.columns.name = "sampling_time"
+    # Make a dataframe of the discovery rate for each true oscillator at each step
+    osc_discovery_vs_t = state_found[:, :, oscillators.index].mean(axis=0).T
+    osc_discovery_df = pd.DataFrame(
+        osc_discovery_vs_t, index=oscillators, columns=steps
+    )
+    osc_discovery_df.index.name = "oscillator"
+    osc_discovery_df.columns.name = "sampling_time"
 
-    # n_plot = 20
-    # results_df = results_df.loc[results_df["p_oscillation"] >= Qthresh]
-    # results_df = results_df.set_index("state")
-    # selected_oscs = results_df.loc[results_df["complexity"] == 6].sort_values("rank")
-    # selected_oscs = selected_oscs.head(n_plot)
+    # Compute precision and recall for each replicate over time
+    osc_mask = states.isin(oscillators).values
+    precision_vs_t = state_found[:, :, osc_mask].sum(axis=-1) / state_found.sum(axis=-1)
+    recall_vs_t = state_found[:, :, osc_mask].sum(axis=-1) / len(oscillators)
 
-    sampled_step = steps[-1]
-    p_reps_with_state = state_found.mean(axis=0)[-1]
-    # results_df = results_df.set_index("state")
-    fraction_df = pd.DataFrame(
+    top_pct = 10
+    top_N = floor(len(oscillators) * top_pct / 100)
+    top_oscillators = results_df.loc[results_df["rank"] <= top_N]["state"]
+    top_mask = states.isin(top_oscillators).values
+    top_recall_vs_t = state_found[:, :, top_mask].sum(axis=-1) / top_N
+    top_precision_vs_t = state_found[:, :, top_mask].sum(axis=-1) / state_found.sum(
+        axis=-1
+    )
+
+    # For each replicate, calculate the sensitivity and false positive rate
+    osc_mask = states.isin(oscillators).values
+    discoveries = state_found[:, -1]
+    n_true_positives = discoveries[:, osc_mask].sum(axis=1)
+    n_false_positives = discoveries[:, ~osc_mask].sum(axis=1)
+    n_false_negatives = (~discoveries)[:, osc_mask].sum(axis=1)
+    n_true_negatives = (~discoveries)[:, ~osc_mask].sum(axis=1)
+
+    precision = n_true_positives / (n_true_positives + n_false_positives)
+    sensitivities = n_true_positives / len(oscillators)
+    false_positives = n_false_positives / (len(states) - len(oscillators))
+
+    print("\nPrecision: \n", pd.Series(precision).describe())
+    print("\nSensitivity/Recall: \n", pd.Series(sensitivities).describe())
+    print("\nFalse positive rate: \n", pd.Series(false_positives).describe())
+
+    discovery_rate = discoveries.mean(axis=0)
+    discovery_df = pd.DataFrame(
         dict(
             state=results_df["state"],
-            fraction=p_reps_with_state,
+            discovery_rate=discovery_rate,
             complexity=results_df["complexity"],
             Q=results_df["p_oscillation"],
         )
     )
-    # fraction_df = fraction_df.loc[results_df["complexity"] == 6]
+
+    ...
 
     warnings.filterwarnings("ignore", category=FutureWarning)
 
     ### Plot % of replicates that classified each state as an oscillator vs. Q
     fig, ax = plt.subplots(figsize=figsize)
     plt.title(r"P(Labeled oscillator)")
-    # palette = sns.color_palette("husl", n_colors=fraction_df["complexity"].nunique())
     palette = sns.color_palette(
-        "turbo_r", n_colors=fraction_df["complexity"].nunique(), desat=0.8
+        "turbo_r", n_colors=discovery_df["complexity"].nunique(), desat=0.8
     )
     sns.scatterplot(
-        # data=fraction_df.loc[fraction_df["fraction"] > 0],
-        data=fraction_df,
+        data=discovery_df,
         x="Q",
-        y="fraction",
+        y="discovery_rate",
         edgecolor="none",
         palette=palette,
         hue="complexity",
@@ -155,9 +175,47 @@ def main(
         print(f"Writing to: {fpath.resolve().absolute()}")
         plt.savefig(fpath, dpi=dpi)
 
+    ## Plot the precision and recall of oscillators discovered over time
+    fig, ax = plt.subplots(figsize=figsize)
+
+    ax.plot(steps, precision_vs_t.mean(axis=0), label="Precision", color="C0")
+    ax.plot(steps, recall_vs_t.mean(axis=0), label="Recall (all)", color="C1")
+    ax.plot(
+        steps,
+        top_recall_vs_t.mean(axis=0),
+        label=f"Recall (Top {top_pct}%)",
+        color="C3",
+    )
+    ax.fill_between(
+        steps, *np.percentile(precision_vs_t, [5, 95], axis=0), alpha=0.2, color="C0"
+    )
+    ax.fill_between(
+        steps, *np.percentile(recall_vs_t, [5, 95], axis=0), alpha=0.2, color="C1"
+    )
+    ax.fill_between(
+        steps, *np.percentile(top_recall_vs_t, [5, 95], axis=0), alpha=0.2, color="C3"
+    )
+
+    ax.set_xlabel(r"Sampling time ($10^3$ iterations)")
+    xticks = np.linspace(0, steps.max(), 11).astype(int)
+    xticklabels = [f"{xt // 1000}" for xt in xticks]
+    ax.set_xticks(xticks)
+    ax.set_xticklabels(xticklabels)
+    ax.set_ylabel("Rate")
+
+    ax.legend()
+    sns.despine()
+    plt.tight_layout()
+
+    if save:
+        today = datetime.today().strftime("%y%m%d")
+        fpath = Path(save_dir).joinpath(f"{today}_precision_recall_vs_t.{fmt}")
+        print(f"Writing to: {fpath.resolve().absolute()}")
+        plt.savefig(fpath, dpi=dpi)
+
     # Plot a kymograph of oscillators discovered over time
     #   - x-axis is sampling time, y-axis is oscillator
-    #   - cmap is the fraction of replicates that found that node
+    #   - cmap is the discovery rate
     results_df = results_df.loc[results_df["p_oscillation"] >= Qthresh]
 
     fig = plt.figure(figsize=figsize)
@@ -165,7 +223,7 @@ def main(
 
     # palette = sns.color_palette(
     hmap = sns.heatmap(
-        data=p_reps_with_osc[:, :where_step_max],
+        data=osc_discovery_vs_t[:, :where_step_max],
         vmin=0,
         vmax=1,
         cmap="rocket_r",
