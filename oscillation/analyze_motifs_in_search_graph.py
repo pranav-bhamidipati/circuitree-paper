@@ -28,9 +28,7 @@ def main(
     save_dir: Path = None,
     progress: bool = False,
 ):
-    print(
-        "Loading search graph from file. This can take many minutes for large graphs..."
-    )
+    print("Loading search graph from file...")
     tree = OscillationTree.from_file(
         Path(search_graph_gml),
         Path(search_graph_json),
@@ -83,6 +81,7 @@ def main(
         null_kwargs=null_kwargs,
         succ_kwargs=succ_kwargs,
         barnard_ok=barnard_ok,
+        exclude_self=True,
         **max_iter_kw,
     )
     df["complexity"] = df["pattern"].map(pattern_complexity)

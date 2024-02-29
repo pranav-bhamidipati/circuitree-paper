@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Iterable
 
 import pandas as pd
-from analyze_search_patterns import main as analyze_patterns
+from analyze_motifs_in_search_graph import main as analyze_patterns
 
 
 def main(

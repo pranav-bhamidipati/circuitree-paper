@@ -108,7 +108,7 @@ def main(
     save_dir: Path = None,
     progress: bool = False,
 ):
-    # Load the results of an exhaustive search and Identify successful circuits
+    # Load the results of an enumeration and Identify successful circuits
     results_df = pd.read_csv(results_csv)
     all_circuits = set(results_df["state"].values)
     print(f"# total circuits in search tree: {len(all_circuits)}")
@@ -125,7 +125,7 @@ def main(
         s: q for s, q in Qs.items() if s in all_circuits
     }  # keep only the fully connected circuits
     successful_circuits = set(n for n, q in Qs.items() if q >= Q_threshold)
-    print(f"# oscillators identified by exhaustive search: {len(successful_circuits)}")
+    print(f"# oscillators identified by enumeration: {len(successful_circuits)}")
 
     testable_patterns = {
         g.split("::")[1]: g
@@ -170,6 +170,7 @@ def main(
         succ_samples=successful_circuits,
         correction=True,
         barnard_ok=True,
+        exclude_self=True,
     )
 
     if nprocs > 1:
