@@ -1,6 +1,6 @@
-from itertools import cycle, islice, repeat, zip_longest
+from itertools import cycle, islice, repeat
 from typing import Iterable, Optional
-from numba import njit, float64, int64
+from numba import njit
 import numpy as np
 from scipy.stats import truncnorm
 
@@ -82,14 +82,14 @@ SAMPLED_VAR_NAMES = [
 ]
 
 SAMPLED_VAR_MATHTEXT = [
-    r"$\log_{10}{K_{D,1}}$",
-    r"${K_{D,2}}/{K_{D,1}}$",
-    r"$k_{m,\mathrm{unbound}}$",
-    r"$k_{m,\mathrm{act}}$",
-    r"$\kappa_\mathrm{rep}$",
-    r"$k_p$",
-    r"$\gamma_m$",
-    r"$\gamma_p$",
+    r"$\kappa_1$",
+    r"$\kappa_2$",
+    r"$k'_{m,\mathrm{unbound}}$",
+    r"$k'_{m,\mathrm{act}}$",
+    r"$r_\mathrm{rep}$",
+    r"$k'_p$",
+    r"$\gamma'_m$",
+    r"$\gamma'_p$",
 ]
 
 MEAN_INITIAL_POPULATION = 10.0
@@ -1035,42 +1035,6 @@ def gillespie_trajectory_asymmetric(
 
 
 class GillespieSSA:
-    seed: int64
-    SAMPLING_RANGES: float64[:, :]
-    time_points: float64[:]
-    dt: float64
-    nt: int64
-    init_mean: float64
-    activations_left: int64[:]
-    activations_right: int64[:]
-    inhibitions_left: int64[:]
-    inhibitions_right: int64[:]
-    max_iter_per_timestep: int64
-    U: int64[:, :]
-    DEFAULT_PARAMS: float64[:]
-    n_propensities: int64
-    n_species: int64
-    n_params: int64
-    m: int64
-    a: int64
-    r: int64
-    m2: int64
-    m3: int64
-    m4: int64
-    m6: int64
-    a2: int64
-    a3: int64
-    r2: int64
-    r3: int64
-    m4a: int64
-    m4a2: int64
-    m4a3: int64
-    m4a3r: int64
-    m4a3r2: int64
-    m4a3r3: int64
-    m2a: int64
-    m2ar: int64
-
     def __init__(
         self,
         seed,
