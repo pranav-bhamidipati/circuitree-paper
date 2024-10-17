@@ -1,7 +1,6 @@
 import datetime
 from functools import partial
 import h5py
-from itertools import cycle, chain, repeat
 import logging
 from multiprocessing import Pool
 import numpy as np
@@ -9,10 +8,10 @@ import pandas as pd
 from pathlib import Path
 from psutil import cpu_count
 from time import perf_counter
-from typing import Iterable, Literal, Optional
+from typing import Literal, Optional
 from uuid import uuid4
 
-from gillespie import PARAM_NAMES, SAMPLING_RANGES
+from gillespie import PARAM_NAMES
 from tf_network import TFNetworkModel
 from oscillation import OscillationTree
 
@@ -308,7 +307,7 @@ def main(
                 estimated_wait = (pool_elapsed / k) * (n_batches_total - k)
                 _msg = (
                     f"{datetime.timedelta(seconds=pool_elapsed)} -- "
-                    f"Finished batch: {k} of {n_batches_total} ({k/n_samples:.2%}) -- "
+                    f"Finished batch: {k} of {n_batches_total} ({k/n_batches_total:.2%}) -- "
                     f"Estimated time remaining: {datetime.timedelta(seconds=estimated_wait)} -- "
                     f"Avg time per simulation: {pool_elapsed/(k * batch_size):.2f}s"
                 )
