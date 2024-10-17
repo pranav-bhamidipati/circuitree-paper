@@ -1099,6 +1099,14 @@ class GillespieSSA:
         """ """
         return _population_from_proteins(proteins, fill_value, self.m, self.n_species)
 
+    def set_nt(self, nt: int) -> None:
+        self.nt = nt
+        self.time_points = self.dt * np.arange(nt)
+
+    def set_dt(self, dt: float) -> None:
+        self.dt = dt
+        self.time_points = dt * np.arange(self.nt)
+
     def set_time_points(self, t: np.ndarray) -> None:
         self.dt = t[1] - t[0]
         self.nt = len(t)
@@ -1213,6 +1221,127 @@ class GillespieSSA:
     def package_params_for_asymmetric_ssa(self, asymmetric_params):
         """ """
         return package_params_for_ssa_asymmetric(asymmetric_params)
+
+    def run_asymmetric(
+        self,
+        pop0,
+        params,
+        seed: Optional[int] = None,
+        nchunks: int = 1,
+        maxiter_ok: bool = True,
+    ):
+        """ """
+        pop0 = np.atleast_2d(pop0)
+        params = np.atleast_3d(params)
+        n_init_states = pop0.shape[0]
+        n_param_sets = params.shape[0]
+        if n_init_states != n_param_sets:
+            raise ValueError(
+                f"Number of parameter sets ({n_param_sets}) and initial simulation "
+                f"conditions ({n_init_states}) must match."
+            )
+
+        batch_size = n_init_states
+        if batch_size == 1:
+            pop0 = pop0[0]
+            params = params[0]
+            ssa_params = self.package_params_for_asymmetric_ssa(params)
+            if nchunks == 1:
+                y_t = self.gillespie_asymmetric(
+                    pop0, *ssa_params, seed=seed, maxiter_ok=maxiter_ok
+                )
+            else:
+                y_t = self.run_asymmetric_in_chunks(
+                    pop0, ssa_params, seed=seed, nchunks=nchunks, maxiter_ok=maxiter_ok
+                )
+        else:
+            if nchunks == 1:
+                y_t = self.run_asymmetric_batch(
+                    pop0, params, seed=seed, maxiter_ok=maxiter_ok
+                )
+            else:
+                y_t = self.run_asymmetric_batch_in_chunks(
+                    pop0, params, seed=seed, nchunks=nchunks, maxiter_ok=maxiter_ok
+                )
+
+        return y_t
+
+    def run_asymmetric_batch(
+        self,
+        pop0s,
+        param_sets,
+        seed: Optional[int | Iterable[int]] = None,
+        maxiter_ok: bool = True,
+    ):
+        """ """
+        n = len(pop0s)
+        iter_seeds = self._random_seed_iterator(n, seed)
+        y_ts = np.zeros((n, self.nt, self.n_species)).astype(np.float64)
+        for i, s in enumerate(iter_seeds):
+            self.rg = np.random.default_rng(s)
+            ssa_params = self.package_params_for_asymmetric_ssa(param_sets[i])
+            y_ts[i] = self.gillespie_asymmetric(
+                pop0s[i], *ssa_params, maxiter_ok=maxiter_ok
+            )
+        return y_ts
+
+    def run_asymmetric_in_chunks(
+        self,
+        pop0,
+        params,
+        seed=None,
+        nchunks=1,
+        maxiter_ok=True,
+    ):
+        """ """
+        if seed is not None:
+            self.rg = np.random.default_rng(seed)
+
+        # Get the number of time points in each chunk
+        nt_chunk, chunk_mod = divmod(self.nt, nchunks)
+        if chunk_mod > 0:
+            nt_chunk += 1
+
+        # Back up time parameters
+        t_complete = self.time_points.copy()
+        nt = self.nt
+
+        # Initialize output
+        y_t = np.zeros((nt, self.n_species), dtype=np.int64)
+        pop0_chunk = pop0
+
+        # Run in chunks
+        for i in range(0, nt, nt_chunk):
+            t_chunk = t_complete[i : i + nt_chunk + 1]
+            self.set_time_points(t_chunk)
+            pop_t_chunk = self.gillespie_asymmetric(
+                pop0_chunk, *params, seed=seed, maxiter_ok=maxiter_ok
+            )
+            y_t[i : i + nt_chunk] = pop_t_chunk[:nt_chunk]
+            pop0_chunk = pop_t_chunk[-1]
+
+        self.set_time_points(t_complete)
+        return y_t
+
+    def run_asymmetric_batch_in_chunks(
+        self,
+        pop0s,
+        param_sets,
+        seed: Optional[int | Iterable[int]] = None,
+        nchunks: int = 1,
+        maxiter_ok: bool = True,
+    ):
+        """ """
+        n = len(pop0s)
+        iter_seeds = self._random_seed_iterator(n, seed)
+        y_ts = np.zeros((n, self.nt, self.n_species)).astype(np.float64)
+        for i, s in enumerate(iter_seeds):
+            self.rg = np.random.default_rng(s)
+            ssa_params = self.package_params_for_asymmetric_ssa(param_sets[i])
+            y_ts[i] = self.run_asymmetric_in_chunks(
+                pop0s[i], ssa_params, seed=s, nchunks=nchunks, maxiter_ok=maxiter_ok
+            )
+        return y_ts
 
     def get_ssa_params_with_knockdown(
         self, params, which_knockdown: int, knockdown_coeff: float
@@ -1376,16 +1505,16 @@ class GillespieSSA:
     def _random_seed_iterator(
         self,
         n: int,
-        seed_or_seeds: Optional[int | Iterable[int]] = None,
+        seed_or_seeds: Optional[int | Iterable] = None,
     ):
         if seed_or_seeds is None:
-            iter_seeds = islice(repeat(None), n)
+            iter_seeds = repeat(None, n)
         elif isinstance(seed_or_seeds, int):
-            iter_seeds = range(seed_or_seeds, seed_or_seeds + n)
+            iter_seeds = islice(enumerate(seed_or_seeds), n)
         elif isinstance(seed_or_seeds, Iterable):
-            iter_seeds = islice(cycle(seed_or_seeds), n)
+            iter_seeds = islice(seed_or_seeds, n)
         else:
-            raise TypeError("seed_or_seeds must be None, int, or Iterable[int]")
+            raise TypeError("seed_or_seeds must be None, int, or Iterable")
         return iter_seeds
 
     def run_with_params(

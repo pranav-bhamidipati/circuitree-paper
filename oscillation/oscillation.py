@@ -67,14 +67,10 @@ class OscillationTree(SimpleNetworkTree):
 
         nan_rewards = np.isnan(rewards)
         if nan_rewards.all():
-            self.save_nan_data(
-                rewards, model=model, y_t=y_t, pop0s=pop0s, param_sets=param_sets
-            )
+            # Retry if the result was nan
             reward = self.get_reward(state)
         elif nan_rewards.any():
-            self.save_nan_data(
-                rewards, model=model, y_t=y_t, pop0s=pop0s, param_sets=param_sets
-            )
+            # Else just ignore the nan runs
             reward = (rewards[~nan_rewards] > self.ACF_threshold).mean()
         else:
             reward = np.mean(rewards > self.ACF_threshold)

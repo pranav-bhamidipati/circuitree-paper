@@ -91,9 +91,9 @@ class TFNetworkModel:
         nt = nt or self.nt
         max_iter_per_timestep = max_iter_per_timestep or self.max_iter_per_timestep
 
-        if any(arg is None for arg in (seed, dt, nt, max_iter_per_timestep)):
+        if any(arg is None for arg in (dt, nt, max_iter_per_timestep)):
             raise ValueError(
-                "seed, dt, and max_iter_per_timestep must be specified for initialization"
+                "dt, and max_iter_per_timestep must be specified for initialization"
             )
         t = dt * np.arange(nt)
         self.t = t
@@ -147,6 +147,19 @@ class TFNetworkModel:
         if n_samples == 1:
             return self.run_ssa_random_params(seed=seed, maxiter_ok=maxiter_ok)
         return self.ssa.run_batch(n_samples, seed=seed, maxiter_ok=maxiter_ok)
+
+    def run_asymmetric(
+        self,
+        pop0: np.ndarray,
+        params: np.ndarray,
+        seed: Optional[int | Iterable[int]] = None,
+        nchunks: int = 1,
+        **kwargs,
+    ):
+        y_t = self.ssa.run_asymmetric(
+            pop0=pop0, params=params, seed=seed, nchunks=nchunks, **kwargs
+        )
+        return y_t
 
     def run_batch_job(self, batch_size: int, abs: bool = False, **kwargs):
         """Run multiple simulations with random parameters and compute ACF min."""
@@ -316,6 +329,68 @@ class TFNetworkModel:
         prots0 = pop0[..., self.m : self.m * 2]
 
         return prots_t, prots0, params, acf_minima
+
+    def run_ssa_asymmetric_and_get_acf_minima(
+        self,
+        dt: float,
+        nt: int,
+        init_proteins: np.ndarray,
+        params: np.ndarray,
+        seed: Optional[int | Iterable[int]] = None,
+        nchunks: int = 5,
+        freqs: bool = False,
+        indices: bool = False,
+        abs: bool = False,
+        **kwargs,
+    ):
+        """
+        Run the stochastic simulation algorithm for the system and get the
+        autocorrelation-based reward.
+        """
+
+        # Initialize the SSA with the given time parameters
+        self.initialize_ssa(seed=None, dt=dt, nt=nt)
+        t = self.t
+
+        # Wrangle the input parameters
+        params = np.atleast_3d(params)
+        batch_size, n_tfs, n_params = params.shape
+        if n_tfs != self.m:
+            raise ValueError(
+                f"Second to last axis of `params` array must have length {self.m}, not {n_tfs}."
+            )
+        pop0 = np.array([self.ssa.population_from_proteins(p) for p in init_proteins])
+
+        # Run the simulation
+        print(kwargs)
+        y_t = self.run_asymmetric(
+            pop0=pop0, params=params, seed=seed, nchunks=nchunks, **kwargs
+        )
+
+        # Isolate the protein species
+        prots_t = y_t[..., self.m : self.m * 2]
+
+        # Catch nans that may be returned if the simulation takes too long
+        mask_axes = prots_t.ndim - 2, prots_t.ndim - 1
+        not_nan_mask = np.logical_not(np.isnan(prots_t).any(axis=mask_axes))
+
+        # Get autocorrelation results for all simulations without NaNs
+        if not (freqs or indices):
+            acf_minima = np.full(prots_t.shape[:-2], np.nan)
+            acf_minima[not_nan_mask] = self.get_acf_minima(
+                prots_t[not_nan_mask], abs=abs
+            )
+        else:
+            nan_result = (np.nan,) * (1 + freqs + indices)
+            acf_minima = [nan_result] * batch_size
+            if not_nan_mask.any():
+                not_nan_results = self.get_acf_minima_and_results(
+                    t, prots_t[not_nan_mask], freqs=freqs, indices=indices, abs=abs
+                )
+                for i, result in zip(not_nan_mask.nonzero()[0], not_nan_results):
+                    acf_minima[i] = result
+
+        return prots_t, acf_minima
 
     def run_with_params_knockdown_and_get_results(
         self,
