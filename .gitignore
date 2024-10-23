@@ -1,3 +1,6 @@
+# Poetry lock file (to be removed once deployment is stable)
+poetry.lock
+
 # Large/unnecessary files (can be symlink)
 data
 logs
