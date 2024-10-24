@@ -4,21 +4,53 @@ import h5py
 import json
 import numpy as np
 from pathlib import Path
+import pandas as pd
 import redis
 from time import perf_counter, sleep
 from tf_network import TFNetworkModel
 
 INT64_MAXVAL = np.iinfo(np.int64).max
 
+param_sets_csv = (
+    "/home/ec2-user/git_data/circuitree/data/oscillation_asymmetric_params/"
+    # "241023_param_sets_10000_5tf.csv"
+    "241023_param_sets_10000_3tf.csv"
+)
+
 app = Celery("tasks")
 app.config_from_object("celeryconfig")
 task_logger = get_task_logger(__name__)
 database: redis.Redis = redis.Redis.from_url(app.conf["broker_url"], db=0)
-print(app.conf["broker_url"])
-n_param_sets = database.hlen("parameter_table")
+print("Database address:", app.conf["broker_url"])
 
 
-@app.task(queue="simulations")
+def read_params_from_table(
+    param_sets_csv: str, row: int, n_components: int
+) -> pd.DataFrame:
+
+    # Use the parameter set corresponding to the visit number
+    param_data = pd.read_csv(param_sets_csv).iloc[row]
+    if "param_index" in param_data:
+        del param_data["param_index"]
+
+    # Extract whether a component is to be mutated (removed)
+    if "component_mutation" in param_data:
+        mutated_component = param_data.pop("component_mutation").item()
+    else:
+        mutated_component = "(none)"
+
+    # Extract the random seed from the parameter set. If a root seed is provided, prepend
+    # it to the seed from the parameter set.
+    seed = int(param_data.pop("prng_seed").item())
+
+    # Extract the initial protein counts and parameter values
+    prots0 = param_data[:n_components].tolist()
+    params = param_data[n_components:].values.reshape(n_components, -1).tolist()
+
+    return prots0, params, seed, mutated_component
+
+
+@app.task
 def run_ssa_no_time_limit(
     state: str,
     param_index: int,
@@ -26,12 +58,13 @@ def run_ssa_no_time_limit(
     nt: int,
     nchunks: int,
     autocorr_threshold: float,
+    param_sets_csv: str,
     save_dir: str,
+    root_seed: int | None = None,
 ) -> tuple[float, tuple[bool, float]]:
     task_logger.info(f"Received {param_index=}, {state=}")
     state_key = "state_" + state.strip("*")
     existing_entry = database.hget(state_key, str(param_index))
-    task_logger.info(f"Existing entry: {existing_entry}")
     if existing_entry is not None:
         autocorr_min, sim_time = json.loads(existing_entry)
         if (autocorr_min <= 0.0) and (sim_time >= 0.0):
@@ -41,10 +74,12 @@ def run_ssa_no_time_limit(
             )
             return autocorr_min, (True, sim_time)
 
-    # Use the parameter set corresponding to the visit number
-    seed, prots0, params, (mutated_component,) = json.loads(
-        database.hget("parameter_table", str(param_index))
+    # Parse the parameter set from the CSV file
+    n_components = len(state.split("::")[0].strip("*"))
+    prots0, params, seed, mutated_component = read_params_from_table(
+        param_sets_csv, param_index, n_components
     )
+    seed_phrase = (root_seed, seed) if root_seed is not None else (seed,)
 
     # Remove the mutated component from the state string
     if mutated_component != "(none)":
@@ -67,21 +102,18 @@ def run_ssa_no_time_limit(
         sim_state = state
 
     kwargs = dict(
-        seed=seed,
+        seed=seed_phrase,
         prots0=prots0,
         params=params,
         dt=dt,
         nt=nt,
-        max_iter_per_timestep=INT64_MAXVAL,  # no limit on reaction rate
         nchunks=nchunks,
         autocorr_threshold=autocorr_threshold,
         save_dir=save_dir,
     )
 
     # Run the simulation
-    prots_t, autocorr_min, sim_time = _run_ssa(state=sim_state, **kwargs)
-    autocorr_min = float(autocorr_min)
-    sim_time = float(sim_time)
+    prots_t, autocorr_min, sim_time = _run_ssa_asymmetric(state=sim_state, **kwargs)
     kwargs["sim_time"] = sim_time
     kwargs["prots_t"] = prots_t.tolist()
 
@@ -94,56 +126,53 @@ def run_ssa_no_time_limit(
     database.hset(state_key, str(param_index), json.dumps([autocorr_min, sim_time]))
 
     # Save data for any oscillating simulations
-    oscillated = -autocorr_min > autocorr_threshold
+    oscillated = autocorr_min < autocorr_threshold
     if oscillated:
         task_logger.info(
             f"Oscillation detected, saving data for {param_index=}, {state=}."
         )
-        save_results.delay(
-            prefix="osc_",
-            param_index=param_index,
-            autocorr_min=autocorr_min,
-            state=state,
-            sim_state=sim_state,
-            **kwargs,
+    else:
+        task_logger.info(
+            f"Oscillation not detected, saving data for {param_index=}, {state=}."
         )
+    save_results.delay(
+        prefix="data_",
+        param_index=param_index,
+        autocorr_min=autocorr_min,
+        state=state,
+        sim_state=sim_state,
+        **kwargs,
+    )
 
     return autocorr_min, (False, sim_time)
 
 
-def _run_ssa(
-    seed: int,
+def _run_ssa_asymmetric(
+    seed: int | tuple[int, int],
     prots0: list[int],
     params: list[float],
     state: str,
     dt: float,
     nt: int,
-    max_iter_per_timestep: int,
     nchunks: int,
     **kwargs,
 ):
     start = perf_counter()
-    model = TFNetworkModel(
-        genotype=state,
-        seed=seed,
+    model = TFNetworkModel(genotype=state)
+    prots_t, autocorr_min = model.run_ssa_asymmetric_and_get_acf_minima(
         dt=dt,
         nt=nt,
-        max_iter_per_timestep=max_iter_per_timestep,
-        initialize=True,
-    )
-    prots_t, autocorr_min = model.run_with_params_and_get_acf_minimum(
-        prots0=np.array(prots0),
+        init_proteins=np.array(prots0),
         params=np.array(params),
-        maxiter_ok=True,
-        abs=False,
-        nchunks=nchunks,  # simulation is run in chunks so it can be interrupted if needed
+        seed=seed,
+        nchunks=nchunks,
     )
     end = perf_counter()
     sim_time = end - start
-    return prots_t, autocorr_min, sim_time
+    return prots_t, float(autocorr_min), float(sim_time)
 
 
-@app.task(queue="io", ignore_result=True)
+@app.task(ignore_result=True)
 def save_results(
     param_index: int,
     seed: int,
@@ -151,7 +180,6 @@ def save_results(
     sim_state: str,
     dt: float,
     nt: int,
-    max_iter_per_timestep: int,
     autocorr_threshold: float,
     save_dir: str,
     prefix: str,
@@ -161,7 +189,7 @@ def save_results(
     **kwargs,
 ):
     fname = f"{prefix}state_{state}_index{param_index}.hdf5"
-    fpath = Path(save_dir) / fname
+    fpath = Path(save_dir) / "data" / fname
     if fpath.exists():
         task_logger.info(f"File {fpath} already exists. Skipping.")
     if prots_t is None:
@@ -176,6 +204,5 @@ def save_results(
         f.attrs["seed"] = seed
         f.attrs["dt"] = dt
         f.attrs["nt"] = nt
-        f.attrs["max_iter_per_timestep"] = max_iter_per_timestep
         f.attrs["autocorr_threshold"] = autocorr_threshold
         f.attrs["sim_time"] = sim_time

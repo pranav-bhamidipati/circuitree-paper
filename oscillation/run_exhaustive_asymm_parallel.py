@@ -62,7 +62,9 @@ def run_batch_and_save(
     sim_time = end_sim_time - start_sim_time
     logging.info(f"Simulation took {sim_time:.2f}s ")
 
-    save_run(genotype, indices, prots_t, acf_minima, save_dir=save_dir, ext=ext)
+    save_run(
+        genotype, indices, prots_t, acf_minima, sim_time, save_dir=save_dir, ext=ext
+    )
     end_time = perf_counter()
     total_time = end_time - start_time
     logging.info(f"Total time {total_time:.2f}s")
@@ -75,6 +77,7 @@ def save_run(
     param_indices,
     prots_t,
     acf_minima,
+    sim_time,
     save_dir,
     ext="csv",
 ):
@@ -92,6 +95,7 @@ def save_run(
             state=genotype,
             param_idx=param_indices,
             acf_min=acf_minima,
+            simulation_time_seconds=sim_time,
             data_file=data_file.name,
         )
     )
@@ -166,6 +170,7 @@ def generate_batched_args(
     genotypes,
     batch_size,
     root_seed,
+    seeds,
     samples_per_genotype=None,
 ):
     """
@@ -266,6 +271,7 @@ def main(
     # Read in the table of parameter sets and initial conditions
     param_table = pd.read_csv(param_sets_csv)
     n_param_sets = len(param_table)
+    seeds = param_table["prng_seed"].values.astype(int)
     init_conditions = param_table[init_columns].values.astype(int)
     param_sets = (
         param_table[param_names].values.astype(float).reshape(n_param_sets, 3, -1)
@@ -277,6 +283,7 @@ def main(
         genotypes,
         batch_size,
         root_seed,
+        seeds,
         samples_per_genotype=n_samples,
     )
 
@@ -309,7 +316,7 @@ def main(
                     f"{datetime.timedelta(seconds=pool_elapsed)} -- "
                     f"Finished batch: {k} of {n_batches_total} ({k/n_batches_total:.2%}) -- "
                     f"Estimated time remaining: {datetime.timedelta(seconds=estimated_wait)} -- "
-                    f"Avg time per simulation: {pool_elapsed/(k * batch_size):.2f}s"
+                    f"Avg time per simulation: {pool_elapsed * n_workers/(k * batch_size):.2f}s"
                 )
                 print(_msg)
                 logging.info(_msg)
@@ -331,9 +338,9 @@ def main(
                     estimated_wait = (pool_elapsed / k) * (n_batches_total - k)
                     _msg = (
                         f"{datetime.timedelta(seconds=pool_elapsed)} -- "
-                        f"Finished batch: {k} of {n_batches_total} ({k/n_samples:.2%}) -- "
+                        f"Finished batch: {k} of {n_batches_total} ({k/n_batches_total:.2%}) -- "
                         f"Estimated time remaining: {datetime.timedelta(seconds=estimated_wait)} -- "
-                        f"Avg time per simulation: {pool_elapsed/(k * batch_size):.2f}s"
+                        f"Avg time per simulation: {pool_elapsed * n_workers/(k * batch_size):.2f}s"
                     )
                     print(_msg)
                     logging.info(_msg)
@@ -345,10 +352,11 @@ def main(
                 k += 1
 
     pool_total_time = perf_counter() - pool_start_time
+    time_per_sim = (pool_total_time * n_workers) / (n_samples * len(genotypes))
     print(
         f"""DONE!
             -- Total time elapsed: {datetime.timedelta(seconds=pool_total_time)}
-            -- Avg time per simulation: {pool_total_time / (n_samples * len(genotypes)):.2f}s
+            -- Avg time per simulation: {time_per_sim:.2f}s
         """
     )
     logging.info(_msg)
@@ -356,10 +364,10 @@ def main(
 
 if __name__ == "__main__":
 
-    run_name = "exhaustive_small"
+    run_name = "exhaustive_small_with_sim_time"
     param_sets_csv = Path(
         "~/git/circuitree-paper/data/oscillation_asymmetric_params/"
-        "241016_param_sets_100_3tf_small.csv"
+        "241017_param_sets_100_3tf_small.csv"
     )
     today = datetime.datetime.now().strftime("%y%m%d")
 
@@ -372,12 +380,12 @@ if __name__ == "__main__":
         param_sets_csv=param_sets_csv,
         save_dir=save_dir,
         log_dir=log_dir,
-        n_samples=50,
-        batch_size=10,
+        n_samples=100,
+        batch_size=20,
         nt=2160,
         dt_seconds=20.0,
-        n_workers=13,
+        n_workers=186,
         nchunks=5,
-        print_every=1,
+        print_every=50,
         # oscillation_thresh=0.35,
     )

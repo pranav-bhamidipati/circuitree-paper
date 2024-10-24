@@ -161,6 +161,19 @@ class TFNetworkModel:
         )
         return y_t
 
+    def run_job(self, **kwargs):
+        """Run a simulation with random parameters and compute ACF min."""
+        y_t, pop0, params, acf_min = self.run_ssa_and_get_acf_minima(
+            self.dt,
+            self.nt,
+            size=1,
+            freqs=False,
+            indices=False,
+            abs=False,
+            **kwargs,
+        )
+        return y_t, pop0, params, acf_min
+
     def run_batch_job(self, batch_size: int, abs: bool = False, **kwargs):
         """Run multiple simulations with random parameters and compute ACF min."""
         y_t, pop0s, param_sets, rewards = self.run_ssa_and_get_acf_minima(
@@ -353,7 +366,14 @@ class TFNetworkModel:
         t = self.t
 
         # Wrangle the input parameters
-        params = np.atleast_3d(params)
+        init_proteins = np.atleast_2d(init_proteins)
+        if init_proteins.ndim != 2:
+            raise ValueError("`init_proteins` must be a 1D or 2D array.")
+        if params.ndim == 2:
+            params = params[None, ...]
+        elif params.ndim != 3:
+            raise ValueError("`params` must be a 2D or 3D array.")
+
         batch_size, n_tfs, n_params = params.shape
         if n_tfs != self.m:
             raise ValueError(
@@ -362,7 +382,6 @@ class TFNetworkModel:
         pop0 = np.array([self.ssa.population_from_proteins(p) for p in init_proteins])
 
         # Run the simulation
-        print(kwargs)
         y_t = self.run_asymmetric(
             pop0=pop0, params=params, seed=seed, nchunks=nchunks, **kwargs
         )
@@ -435,17 +454,18 @@ class TFNetworkModel:
         init_mean: float = MEAN_INITIAL_POPULATION,
         maxiter_ok: bool = True,
         nchunks: int = 1,
+        seed: Optional[int] = None,
     ) -> tuple[np.ndarray, float]:
         """Run an SSA with a (partial or complete) knockdown of one of the TFs
         and return the results."""
         pop0 = self.ssa.draw_random_initial(init_mean=init_mean)
         y_t = self.ssa.run_with_params_in_chunks_with_perturbation(
-            # pop0, params, sigma_params, nchunks=1, seed=None,
             pop0,
             params,
             sigma_params,
             nchunks=nchunks,
             maxiter_ok=maxiter_ok,
+            seed=seed,
         )
 
         # Get presence and frequency of oscillation

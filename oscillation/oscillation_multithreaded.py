@@ -2,137 +2,130 @@ from gevent import monkey
 
 monkey.patch_all()
 
-from time import perf_counter
-from gevent import getcurrent, sleep
-from gevent.event import Event
-
-# from gevent.lock import RLock
+from gevent import getcurrent
 from gevent.queue import Queue
-from itertools import count
+
 from celery.result import AsyncResult
-import numpy as np
-from pathlib import Path
-import redis
-import sys
-from typing import Hashable, Optional
 import datetime
+import numpy as np
+import pandas as pd
+from pathlib import Path
+import sys
+from time import perf_counter
+from typing import Optional
 from uuid import uuid4
 
-from circuitree.parallel import ParallelNetworkTree
-from redis_backup import main as backup_database
+from circuitree.utils import (
+    DatabaseBackupManager,
+    ThreadsafeCounter,
+    ThreadsafeCountTable,
+)
 
+from redis_backup import main as backup_database
+from oscillation import OscillationTree
 from oscillation_app import database, app, task_logger, run_ssa_no_time_limit
 
 
-### Define some helpful primitives for multithreading ###
+class TimedBackupManager(DatabaseBackupManager):
+
+    def backup_to_file(
+        self,
+        save_dir: str | Path,
+        prefix: str,
+        keyset: str = "transposition_table_keys",
+        logger=None,
+        dry_run: bool = False,
+        timed: bool = True,
+        **kwargs,
+    ):
+        """Backup the database to a file."""
+        if timed:
+            start = perf_counter()
+        backup_database(
+            keyset=keyset,
+            host=self.database_info["host"],
+            port=self.database_info["port"],
+            db=self.database_info["db"],
+            save_dir=save_dir,
+            prefix=prefix,
+            tz=self.time_zone,
+            progress_bar=False,
+            print_progress=True,
+            logger=logger,
+            dry_run=dry_run,
+            **kwargs,
+        )
+        if timed:
+            end = perf_counter()
+            return end - start
+        else:
+            return
 
 
-class ExhaustionError(RuntimeError):
-    """Raised when the entire search tree is exhaustively sampled."""
-
-
-class BackupContextManager:
-    def __init__(self, backup_not_in_progress: Event):
-        self._backup_not_in_progress = backup_not_in_progress
-
-    def __enter__(self):
-        self._backup_not_in_progress.clear()
-
-    def __exit__(self, *args):
-        self._backup_not_in_progress.set()
-
-
-class ManagedEvent(Event):
-    """Event object that also provides a context manager."""
-
-    def backup_context(self):
-        """During a backup, the context manager will clear the event, blocking all
-        threads until the backup is complete. Then the event is set again and
-        threads are released."""
-        return BackupContextManager(self)
-
-
-class AtomicCounter:
-    """Increments a counter atomically. Uses itertools.count(), which
-    is implemented in C as an atomic operation.
-
-    **REQUIRES CYPTHON**
-
-    From StackOverflow user `PhilMarsh`:
-        https://stackoverflow.com/a/71565358
-
-    """
-
-    def __init__(self):
-        self._incs = count()
-        self._accesses = count()
-
-    def increment(self):
-        next(self._incs)
-
-    def value(self):
-        return next(self._incs) - next(self._accesses)
-
-
-### Define the multithreaded MCTS search tree and its batched counterpart ###
-
-
-class MultithreadedOscillationTree(ParallelNetworkTree):
+class MultithreadedOscillationTree(OscillationTree):
     """Run CircuiTree with a lock-free parallel implementation of the MCTS algorithm."""
 
     def __init__(
         self,
         *,
         save_dir: str | Path,
+        param_sets_csv: str | Path,
         n_exhausted: Optional[int] = None,
         success_threshold: float = 0.01,
-        autocorr_threshold: float = 0.4,
+        autocorr_threshold: float = -0.4,
         dt: float = 20.0,
         nt: int = 2000,
         nchunks: int = 5,
-        database: redis.Redis = database,
         queue_size: Optional[int] = None,
         logger=None,
         tz_offset: int = -7,  # Pacific time
+        next_backup_in_seconds: int = 0,
         **kwargs,
-        # max_iter_per_timestep: int = 100_000_000,
     ):
         super().__init__(**kwargs)
 
         self.tree_id = str(uuid4())
+        self.logger = logger or task_logger
 
-        self.autocorr_threshold = autocorr_threshold
-        self.dt = dt
-        self.nt = nt
-        self.nchunks = nchunks
-        self.success_threshold = success_threshold
-
-        self.backup_not_in_progress = ManagedEvent()
-        self.backup_not_in_progress.set()
-        self.last_backed_up_iteration: int = 0
-        self.global_iteration = AtomicCounter()
-
-        self.time_zone = datetime.timezone(datetime.timedelta(hours=tz_offset))
-        self.next_backup_time = datetime.datetime.now(self.time_zone)
+        self.backup = TimedBackupManager(
+            database_info=database.connection_pool.connection_kwargs,
+            tz_offset=tz_offset,
+            next_backup_in_seconds=next_backup_in_seconds,
+        )
+        # self.global_iteration = AtomicCounter()
+        self.global_iteration = ThreadsafeCounter()
+        self.visit_counter = ThreadsafeCountTable()
+        self.last_results_dump_iter = 0
 
         self.queue_size = queue_size or 0
         self.result_history = Queue(maxsize=self.queue_size)
 
-        if not save_dir:
-            raise ValueError("Must specify a save directory.")
-
         save_dir_path = Path(save_dir)
         save_dir_path.mkdir(exist_ok=True)
+        save_dir_path.joinpath("backups").mkdir(exist_ok=True)
+        save_dir_path.joinpath("results").mkdir(exist_ok=True)
+        save_dir_path.joinpath("data").mkdir(exist_ok=True)
         self.save_dir = str(save_dir_path.resolve().absolute())
 
-        self.database = database
-        self.n_param_sets: int = self.database.hlen("parameter_table")
+        # The parameter sets to sample are stored in a CSV file
+        self.param_sets_csv = str(param_sets_csv.resolve().absolute())
+        self.n_param_sets = pd.read_csv(self.param_sets_csv).shape[0]
 
-        # Set the number of times a terminal node must be visited before it is
-        # considered exhausted. Defaults to the number of parameter sets in the database.
-        self.n_exhausted = n_exhausted or self.n_param_sets
+        self.autocorr_threshold = autocorr_threshold
+        self.success_threshold = success_threshold
+        self.sim_kwargs = dict(
+            dt=dt,
+            nt=nt,
+            nchunks=nchunks,
+            autocorr_threshold=self.autocorr_threshold,
+            param_sets_csv=self.param_sets_csv,
+            save_dir=self.save_dir,
+            root_seed=self.seed,
+        )
 
-        self.logger = logger or task_logger
+        # The number of times a terminal node is visited before it is exhausted
+        # (i.e. all parameter sets have been sampled)
+        self.n_exhausted = n_exhausted
 
         # Specify attributes that should be skipped when dumping to file
         self._non_serializable_attrs.extend(
@@ -140,121 +133,32 @@ class MultithreadedOscillationTree(ParallelNetworkTree):
                 "save_dir",
                 "logger",
                 "database",
-                "backup_not_in_progress",
-                "last_backed_up_iteration",
+                "backup",
                 "global_iteration",
-                "time_zone",
-                "next_backup_time",
+                "visit_counter",
                 "result_history",
             ]
         )
 
-    @property
-    def sim_kwargs(self):
-        return dict(
-            dt=self.dt,
-            nt=self.nt,
-            nchunks=self.nchunks,
-            autocorr_threshold=self.autocorr_threshold,
-            save_dir=self.save_dir,
-        )
-
-    def select_and_expand(
-        self, rg: Optional[np.random.Generator] = None
-    ) -> list[Hashable]:
-        rg = self.rg if rg is None else rg
-
-        # Start at root
-        node = self.root
-        selection_path = [node]
-        actions = self.grammar.get_actions(node)
-
-        # Select the child with the highest UCB score until you reach a terminal
-        # state or an unexpanded edge
-        while actions:
-            max_ucb = -np.inf
-            best_child = None
-            rg.shuffle(actions)
-            for action in actions:
-                child = self._do_action(node, action)
-
-                # Skip this child if it has been exhausted (i.e. all of its terminal
-                # descendants have been expanded and simulated exhaustively)
-                if child in self.graph.nodes and self.graph.nodes[child].get(
-                    "is_exhausted", False
-                ):
-                    continue
-
-                ucb = self.get_ucb_score(node, child)
-
-                # An unexpanded edge has UCB score of infinity.
-                # In this case, expand and select the child.
-                if ucb == np.inf:
-                    self.expand_edge(node, child)
-                    selection_path.append(child)
-                    return selection_path
-
-                # Otherwise, track the child with the highest UCB score
-                if ucb > max_ucb:
-                    max_ucb = ucb
-                    best_child = child
-
-            node = best_child
-            selection_path.append(node)
-            actions = self.grammar.get_actions(node)
-
-        # If the loop breaks, we have reached a terminal state.
-
-        # Check for exhaustion. A terminal state can become exhausted if it has been
-        # simulated enough times to have sampled all parameter sets.
-        if self.graph.nodes[node].get("visits", 0) >= self.n_exhausted - 1:
-            self.mark_as_exhausted(node)
-
-        return selection_path
-
-    def mark_as_exhausted(self, node: str) -> None:
-        """Mark a terminal node as exhausted. Its parent nodes will be modified to
-        forget results from this node (i.e. the visits are decremented and the reward
-        is subtracted from the total reward). If all nodes of the parent are exhausted,
-        the parent is also marked as exhausted - this is done recursively up the tree.
-        """
-        self.logger.info(f"Marking node {node} as exhausted.")
-        self.graph.nodes[node]["is_exhausted"] = True
-
-        # If the whole tree is exhausted, we are done
-        if node == self.root:
-            self.logger.info(
-                "Every node in the tree has been visited to exhaustion. Exiting."
-            )
-            raise ExhaustionError(
-                "Every node in the tree has been visited to exhaustion."
-            )
-
-        # Forget results from this node
-        for parent in self.graph.predecessors(node):
-            edge_visits = self.graph.edges[parent, node]["visits"]
-            edge_reward = self.graph.edges[parent, node]["reward"]
-            self.graph.nodes[parent]["visits"] -= edge_visits
-            self.graph.nodes[parent]["reward"] -= edge_reward
-
-        # Recursively mark parent nodes as exhausted
-        for parent in self.graph.predecessors(node):
-            if all(
-                self.graph.nodes[c].get("is_exhausted", False)
-                for c in self.graph.successors(parent)
-            ):
-                self.mark_as_exhausted(parent)
-
     def get_param_set_index(self, state: str, visit: int) -> int:
-        """Get the index of the parameter set to use for this state and visit number."""
-        # Shuffle the param sets in a manner unique to each state
+        """Get the index of the parameter set to use for this state and visit number.
+        Shuffles the order of the parameter sets in a manner unique to each state,
+        so that different threads will sample parameter sets in a different order. This
+        is because most nodes will only be sampled once, so the order of sampling is
+        important for the diversity of the search.
+
+        Under the hood, this function uses a random number generator seeded with the
+        hash of the state string. This ensures that the order of parameter sets is
+        deterministic for each state, but uncorrelated between states.
+        """
         param_set_indices = np.arange(self.n_param_sets)
-        hash_val = hash(state) + sys.maxsize  # Make sure it's non-negative
+        hash_val = hash(state) + sys.maxsize  # Ensure positive hash value
         np.random.default_rng(hash_val).shuffle(param_set_indices)
         return param_set_indices[visit % self.n_param_sets]
 
-    def get_reward(self, state: str, visit_number: int, **kwargs) -> float:
+    def get_reward(self, state: str, **kwargs) -> float:
         """Get the simulation result for this state-seed pair"""
+        visit_number = self.visit_counter.get_val_and_increment(state)
         param_index = self.get_param_set_index(state, visit_number)
         self.logger.info(f"Getting reward for {visit_number=}, {state=}")
         task: AsyncResult = run_ssa_no_time_limit.apply_async(
@@ -262,17 +166,15 @@ class MultithreadedOscillationTree(ParallelNetworkTree):
         )
 
         # Don't update iteration counter until a running backup is complete
-        self.backup_not_in_progress.wait()
+        self.backup.wait_until_finished()
         self.global_iteration.increment()
 
         # Wait for the simulation to complete
         autocorr_min, (result_was_cached, simulation_time) = task.get()
-        reward = float(-autocorr_min > self.autocorr_threshold)
+        reward = float(autocorr_min < self.autocorr_threshold)
 
-        # Don't backpropagate until a running backup is complete. Most thread-time is
-        # spent in the get() call above, so simulations will stlll be running in the
-        # background during the backup.
-        self.backup_not_in_progress.wait()
+        # Wait for any backups to complete before the next step (backpropagation)
+        self.backup.wait_until_finished()
         self.logger.info(
             f"Autocorr. min. of {autocorr_min:.4f} for visit {visit_number} "
             f"to state {state}. Oscillating? {bool(reward)}."
@@ -280,100 +182,30 @@ class MultithreadedOscillationTree(ParallelNetworkTree):
         self.result_history.put((state, reward))
         return reward
 
+    def dump_results(self, timestamp: str = None, *args, **kwargs):
+        """Dump the results of the MCTS search to a file."""
 
-class BatchedOscillationTree(MultithreadedOscillationTree):
-    """Run multiple simulations at each visit, backpropagating the incremental
-    (average) reward."""
+        if timestamp is None:
+            timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        suffix = f"_{timestamp}.txt"
 
-    def __init__(self, *, batch_size: int = 1, **kwargs):
-        super().__init__(**kwargs)
-        self.batch_size = batch_size
-
-    def traverse(self, thread_idx: int, **kwargs):
-        """Select a node, simulate a trajectory, and backpropagate the result.
-        Performs a single iteration of the MCTS algorithm, with multiple simulations
-        in parallel per iteration."""
-        # Select the next state to sample and the terminal state to be simulated.
-        # Expands a child if possible.
-        rg = self._random_generators[thread_idx]
-        selection_path = self.select_and_expand(rg=rg)
-
-        # Between backpropagation of visit and reward, we incur virtual loss
-        self.backpropagate_visit(selection_path)
-
-        # Simulate multiple trajectories from the selected state. The parameter
-        # set for each trajectory is selected by shuffling the parameter set indices
-        # in a manner unique to each state.
-        selected_state = selection_path[-1]
-        sim_nodes_and_param_indices = []
-        for _ in range(self.batch_size):
-            sim_node = self.get_random_terminal_descendant(selected_state, rg=rg)
-            sample_number = self.sample_counter[sim_node]
-            self.sample_counter[sim_node] += 1
-            param_idx = self.get_param_set_index(sim_node, sample_number)
-            sim_nodes_and_param_indices.append((sim_node, param_idx))
-
-        # Submit all simulations to the Celery task queue
-        self.logger.info(
-            f"Getting reward for {self.batch_size} simulations of {selected_state=}"
+        last_dumped = self.last_results_dump_iter
+        global_iter = self.global_iteration.value()
+        results_file = Path(self.save_dir).joinpath(
+            f"results_steps{last_dumped+1}-{global_iter}" f"_{self.tree_id}{suffix}.txt"
         )
-        tasks: list[AsyncResult] = []
-        for sim_node, param_idx in sim_nodes_and_param_indices:
-            task: AsyncResult = run_ssa_no_time_limit.apply_async(
-                args=(sim_node, int(param_idx)), kwargs=self.sim_kwargs, **kwargs
-            )
-            tasks.append((sim_node, task))
+        self.logger.info(
+            f"Dumping results of iters {last_dumped+1}-{global_iter} to: {results_file}"
+        )
 
-        # As tasks complete, backpropagate the updated reward
-        rewards = []
-        while tasks:
-            sleep(0.1)
-            completed_tasks = [(s, t) for s, t in tasks if t.ready()]
-            for simulated_state, task in completed_tasks:
-                # Get task result
-                autocorr_min, (result_was_cached, simulation_time) = task.get()
-
-                # # If the result was cached, sleep for the duration of simulation time.
-                # # This is to ensure that non-cached and cached results take the same amount
-                # # of time to complete. Otherwise, MCTS will preferentially select cached
-                # # results, which will bias the search.
-                # if result_was_cached:
-                #     self.logger.info(
-                #         f"Result was cached. Sleeping for {simulation_time:.2f}s."
-                #     )
-                #     sleep(simulation_time)
-
-                reward = float(-autocorr_min > self.autocorr_threshold)
-                rewards.append(reward)
-
-                # Don't backpropagate until a running backup has completed
-                self.backup_not_in_progress.wait()
-                self.logger.info(
-                    f"Autocorr. min. of {autocorr_min:.4f} for {simulated_state=} "
-                    f"Oscillating? {bool(reward)}."
-                )
-
-                # Backpropagate a fraction of the reward
-                self.result_history.put((selected_state, reward))
-                self.backpropagate_reward(selection_path, reward / self.batch_size)
-
-                # Remove the task from the to-do list
-                tasks.remove((simulated_state, task))
-
-        # Keep track of the total number of iterations performed
-        self.backup_not_in_progress.wait()
-        self.global_iteration.increment()
-
-        return selection_path, reward, sim_node
-
-
-def progress_callback_in_thread(
-    mtree: MultithreadedOscillationTree, iteration: int, *args, **kwargs
-):
-    """Callback function to report progress of MCTS search."""
-    thread_id = getattr(getcurrent(), "minimal_ident", "__main__")
-    _progress_msg = f"{iteration} iterations complete for thread {thread_id}"
-    mtree.logger.info(_progress_msg)
+        # gevent Queue object can be called as an iterator, calling get() repeatedly.
+        # This clears the queue. Note that StopIteration is required, otherwise the
+        # iterator won't terminate and get() will block indefinitely.
+        self.result_history.put(StopIteration)
+        visit_results = [
+            ",".join([state, str(reward)]) for state, reward in self.result_history
+        ]
+        results_file.write_text("\n".join(visit_results))
 
 
 def progress_and_backup_in_thread(
@@ -381,12 +213,11 @@ def progress_and_backup_in_thread(
     iteration: int,
     *args,
     progress_every: int = 10,
-    backup_dir: str | Path,
-    backup_every: int = 3600,
-    n_tree_backups: int = 10,
+    backup_every: int = 10_800,
+    n_tree_backups: int = 200,
     db_keyset: str = "transposition_table_keys",
     db_backup_prefix: str = "mcts_5tf_",
-    backup_results: bool = True,
+    dump_results: bool = True,
     force_backup: bool = False,
     dry_run: bool = False,
     # skip_sync: bool = False,
@@ -395,8 +226,9 @@ def progress_and_backup_in_thread(
     """Callback function called at the end of every `callback_every` steps *per-thread*.
     When called:
         1) Reports progress of MCTS search
-        2) If enough time has elapsed, backs up the tree to disk
-        3) [Commented out] Blocks until all threads complete their callback
+        2) If enough time has elapsed, backs up the search tree and database to disk
+        3) If `dump_results` is True, dumps to disk the results of iterations completed
+            since the last dump.
     """
     thread_id = getattr(getcurrent(), "minimal_ident", "__main__")
     if iteration > 0 and iteration % progress_every == 0:
@@ -406,26 +238,27 @@ def progress_and_backup_in_thread(
         )
 
     # Backup the tree if enough time has elapsed
-    now = datetime.datetime.now(mtree.time_zone)
-    do_backup = mtree.next_backup_time < now
-    if do_backup or force_backup:
-        if not mtree.backup_not_in_progress.is_set():
+    if force_backup or mtree.backup.is_due():
+        if mtree.backup.is_running():
             # During a backup, non-backup threads block until the backup is complete.
             if iteration == 0:
                 # No search iterations are performed before the initial backup.
                 # After this, threads are blocked during the get_reward() call.
-                mtree.backup_not_in_progress.wait()
+                mtree.backup.wait()
             return
 
         # First thread to reach this point will perform the backup
-        with mtree.backup_not_in_progress.backup_context():
+        with mtree.backup():
             global_iter = mtree.global_iteration.value()
             mtree.logger.info(
                 f"Backup triggered in thread {thread_id} at global iteration {global_iter}."
             )
             save_metadata = iteration == 0
-            backup_results = backup_results and iteration != 0
-            _backup_in_thread(
+            dump_results = dump_results and iteration != 0
+
+            backup_dir = Path(mtree.save_dir).joinpath("backups")
+            backup_dir.mkdir(exist_ok=True)
+            backup_in_thread(
                 mtree=mtree,
                 global_iter=global_iter,
                 backup_dir=backup_dir,
@@ -434,59 +267,14 @@ def progress_and_backup_in_thread(
                 db_keyset=db_keyset,
                 db_backup_prefix=db_backup_prefix,
                 db_kwargs=db_kwargs,
-                backup_results=backup_results,
+                dump_results=dump_results,
                 save_metadata=save_metadata,
                 dry_run=dry_run,
                 **db_kwargs,
             )
 
-        # if mtree.backup_not_in_progress.is_set():
-        #     # Clear the event and perform the backup. Calls to backup_not_in_progress.wait() will
-        #     # block until the backup is complete.
-        #     with mtree.backup_not_in_progress.backup_context():
-        #         global_iter = mtree.global_iteration.value()
-        #         mtree.logger.info(
-        #             f"Backup triggered in thread {thread_id} at global iteration {global_iter}."
-        #         )
-        #         save_metadata = iteration == 0
-        #         backup_results = backup_results and iteration != 0
-        #         _backup_in_thread(
-        #             mtree=mtree,
-        #             global_iter=global_iter,
-        #             backup_dir=backup_dir,
-        #             backup_every=backup_every,
-        #             n_tree_backups=n_tree_backups,
-        #             db_keyset=db_keyset,
-        #             db_backup_prefix=db_backup_prefix,
-        #             db_kwargs=db_kwargs,
-        #             backup_results=backup_results,
-        #             save_metadata=save_metadata,
-        #             dry_run=dry_run,
-        #             **db_kwargs,
-        #         )
 
-    # if skip_sync:
-    #     return
-
-    # # Regardless of backup, wait for all threads to reach this point before proceeding
-    # with mtree.thread_lock:
-    #     mtree.n_synced_threads += 1
-    #     if mtree.n_synced_threads == 1:
-    #         mtree.logger.info(
-    #             f"Syncing threads at iteration {iteration} in thread {thread_id}"
-    #         )
-    #         mtree.threads_are_synced.clear()
-    #     if mtree.n_synced_threads == mtree.threads:
-    #         mtree.logger.info(
-    #             f"All threads synced at iteration {iteration} in thread {thread_id}"
-    #         )
-    #         mtree.n_synced_threads = 0
-    #         mtree.threads_are_synced.set()
-
-    # mtree.threads_are_synced.wait()
-
-
-def _backup_in_thread(
+def backup_in_thread(
     mtree: MultithreadedOscillationTree,
     global_iter: int,
     backup_dir: str | Path,
@@ -494,13 +282,13 @@ def _backup_in_thread(
     n_tree_backups: int,
     db_keyset: str,
     db_backup_prefix: str,
-    backup_results: bool,
+    dump_results: bool,
     save_metadata: bool,
     dry_run: bool = False,
     **db_kwargs,
 ):
     date_time_fmt = "%Y-%m-%d_%H-%M-%S"
-    now = datetime.datetime.now(mtree.time_zone)
+    now = datetime.datetime.now(mtree.backup.time_zone)
     now_fmt = now.strftime(date_time_fmt)
 
     gml_file = Path(backup_dir) / f"tree-{mtree.tree_id}_{now_fmt}.gml"
@@ -510,7 +298,7 @@ def _backup_in_thread(
         mtree.logger.info(f"Deleting old backup file: {f}")
         f.unlink()
 
-    # Tree attributes (metadata) are only saved once
+    # Tree attributes (metadata) only need to be saved once, at the beginning
     if save_metadata:
         json_file = Path(backup_dir) / f"tree-{mtree.tree_id}_{now_fmt}.json"
         mtree.logger.info(f"Backing up tree metadata to file: {json_file}")
@@ -527,51 +315,37 @@ def _backup_in_thread(
     mtree.logger.info(f"Graph backup completed in {tree_end-tree_start:.4f} seconds.")
 
     mtree.logger.info(f"Backing up transposition table database...")
-    database_info = mtree.database.connection_pool.connection_kwargs
-    db_start = perf_counter()
-    backup_database(
-        keyset=db_keyset,
-        host=database_info["host"],
-        port=database_info["port"],
-        db=database_info["db"],
+    database_info = database.connection_pool.connection_kwargs
+    backup_elapsed = mtree.backup.backup_to_file(
         save_dir=backup_dir,
         prefix=db_backup_prefix,
-        tz=mtree.time_zone,
-        progress_bar=False,
-        print_progress=True,
-        logger=mtree.logger,
+        database_info=database_info,
+        keyset=db_keyset,
         dry_run=dry_run,
         **db_kwargs,
     )
-    db_end = perf_counter()
-    mtree.logger.info(f"Database backup completed in {db_end-db_start:.4f} seconds.")
+    mtree.logger.info(f"Database backup completed in {backup_elapsed:.4f} seconds.")
+    mtree.backup.schedule_next(backup_every)
 
-    if backup_results:
-        last_backed_up = mtree.last_backed_up_iteration
-        results_file = Path(mtree.save_dir).joinpath(
-            f"results_steps{last_backed_up+1}-{global_iter}"
-            f"_{mtree.tree_id}_{now_fmt}.txt"
-        )
-        mtree.logger.info(
-            f"Backing up states visited at steps "
-            f"{last_backed_up+1}-{global_iter} to file: {results_file}"
-        )
-
-        # gevent Queue object can be called as an iterator, calling get() repeatedly.
-        # This clears the queue. Note that StopIteration is required, otherwise the
-        # iterator won't terminate and get() will block indefinitely.
+    if dump_results:
+        last_dumped = mtree.last_results_dump_iter
         result_start = perf_counter()
-        mtree.result_history.put(StopIteration)
-        visit_results = [
-            ",".join([state, str(reward)]) for state, reward in mtree.result_history
-        ]
-        results_file.write_text("\n".join(visit_results))
+        mtree.dump_results(now_fmt)
         result_end = perf_counter()
         mtree.logger.info(
-            f"Results backup completed in {result_end-result_start:.4f} seconds."
+            f"Dumped {global_iter - last_dumped} results in "
+            f"{result_end-result_start:.4f} secs."
         )
 
     # Release all threads
     mtree.logger.info("Done. Releasing all threads.")
-    mtree.last_backed_up_iteration = global_iter
-    mtree.next_backup_time = now + datetime.timedelta(seconds=backup_every)
+    mtree.last_results_dump_iter = global_iter
+
+
+def progress_callback_in_thread(
+    mtree: MultithreadedOscillationTree, iteration: int, *args, **kwargs
+):
+    """Callback function to report progress of MCTS search."""
+    thread_id = getattr(getcurrent(), "minimal_ident", "__main__")
+    _progress_msg = f"{iteration} iterations complete for thread {thread_id}"
+    mtree.logger.info(_progress_msg)

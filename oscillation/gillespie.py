@@ -1232,7 +1232,13 @@ class GillespieSSA:
     ):
         """ """
         pop0 = np.atleast_2d(pop0)
-        params = np.atleast_3d(params)
+        if params.ndim == 2:
+            params = params[None, ...]
+        elif params.ndim != 3:
+            raise ValueError(
+                "Parameter sets must be a 2D array or a 3D array in which the first axis "
+                "corresponds to the number of parameter sets."
+            )
         n_init_states = pop0.shape[0]
         n_param_sets = params.shape[0]
         if n_init_states != n_param_sets:

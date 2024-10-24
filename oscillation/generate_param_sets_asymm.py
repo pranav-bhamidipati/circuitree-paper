@@ -51,11 +51,10 @@ def main(
     init_data.index.name = "param_index"
     param_data = pd.DataFrame(param_sets, columns=param_names)
     param_data.index.name = "param_index"
-    data = pd.concat([init_data, param_data], axis=1)
 
-    # seed_data = pd.DataFrame({"prng_seed": prng_seeds})
-    # seed_data.index.name = "param_index"
-    # data = pd.concat([seed_data, init_data, param_data], axis=1)
+    seed_data = pd.DataFrame({"prng_seed": prng_seeds})
+    seed_data.index.name = "param_index"
+    data = pd.concat([seed_data, init_data, param_data], axis=1)
 
     if p_mutation > 0:
         p_mutation = [1 - p_mutation] + [p_mutation / n_components] * n_components
@@ -74,13 +73,35 @@ def main(
 
 if __name__ == "__main__":
 
-    ## 3 TFs, 100 samples
+    # ## 3 TFs, 100 samples
+    # save_dir = Path("data/oscillation_asymmetric_params")
+    # save_dir.mkdir(exist_ok=True)
+    # main(
+    #     n_samples=100,
+    #     save_dir=save_dir,
+    #     save=True,
+    #     components=list("ABC"),
+    #     suffix="_3tf_small",
+    # )
+
+    # ## 3 TFs, 10k samples
+    # save_dir = Path("data/oscillation_asymmetric_params")
+    # save_dir.mkdir(exist_ok=True)
+    # main(
+    #     n_samples=10_000,
+    #     save_dir=save_dir,
+    #     save=True,
+    #     components=list("ABC"),
+    #     suffix="_3tf",
+    # )
+
+    ## 5 TFs, 10k samples
     save_dir = Path("data/oscillation_asymmetric_params")
     save_dir.mkdir(exist_ok=True)
     main(
-        n_samples=100,
+        n_samples=10_000,
         save_dir=save_dir,
         save=True,
-        components=list("ABC"),
-        suffix="_3tf_small",
+        components=list("ABCDE"),
+        suffix="_5tf",
     )

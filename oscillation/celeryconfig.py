@@ -2,7 +2,7 @@
 # broker_url = "redis://circuitree-cache2.t3c6zs.ng.0001.usw2.cache.amazonaws.com:6379"
 # broker_url = "valkeys://pranav-circuitree-cache-t3c6zs.serverless.usw2.cache.amazonaws.com:6379"
 broker_url = (
-    "rediss://circuitree-cache-redis-t3c6zs.serverless.usw2.cache.amazonaws.com:6379"
+    "redis://circuitree-cache-nocluster.t3c6zs.ng.0001.usw2.cache.amazonaws.com:6379"
 )
 
 result_backend = broker_url

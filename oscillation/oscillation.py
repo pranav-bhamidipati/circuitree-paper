@@ -1,6 +1,4 @@
-import warnings
 from circuitree.models import SimpleNetworkTree
-import h5py
 import numpy as np
 from pathlib import Path
 from typing import Optional, Iterable
@@ -14,12 +12,10 @@ class OscillationTree(SimpleNetworkTree):
         self,
         time_points: Optional[np.ndarray[np.float64]] = None,
         Q_threshold: float = 0.01,
-        ACF_threshold: float = 0.4,
+        ACF_threshold: float = -0.4,
         init_mean: float = 10.0,
         dt: Optional[float] = None,
         nt: Optional[int] = None,
-        batch_size: int = 1,
-        max_iter_per_timestep: int = 100_000_000,
         save_dir: Optional[str | Path] = None,
         **kwargs,
     ):
@@ -32,9 +28,6 @@ class OscillationTree(SimpleNetworkTree):
         self.dt = dt
         self.nt = nt
         self.init_mean = init_mean
-        self.batch_size = batch_size
-
-        self.max_iter_per_timestep = max_iter_per_timestep
 
         self.save_dir = save_dir
 
@@ -46,7 +39,6 @@ class OscillationTree(SimpleNetworkTree):
     def get_reward(
         self,
         state: str,
-        batch_size: Optional[int] = None,
         dt: Optional[float] = None,
         nt: Optional[int] = None,
         maxiter: Optional[int] = None,
@@ -54,8 +46,6 @@ class OscillationTree(SimpleNetworkTree):
         dt = dt if dt is not None else self.dt
         nt = nt if nt is not None else self.nt
         maxiter = maxiter if maxiter is not None else self.max_iter_per_timestep
-        batch_size = batch_size if batch_size is not None else self.batch_size
-
         model = TFNetworkModel(
             state,
             initialize=True,
@@ -63,57 +53,7 @@ class OscillationTree(SimpleNetworkTree):
             nt=nt,
             max_iter_per_timestep=maxiter,
         )
-        y_t, pop0s, param_sets, rewards = model.run_batch_job(batch_size, abs=True)
+        y_t, pop0, param_set, acf_min = model.run_job()
 
-        nan_rewards = np.isnan(rewards)
-        if nan_rewards.all():
-            # Retry if the result was nan
-            reward = self.get_reward(state)
-        elif nan_rewards.any():
-            # Else just ignore the nan runs
-            reward = (rewards[~nan_rewards] > self.ACF_threshold).mean()
-        else:
-            reward = np.mean(rewards > self.ACF_threshold)
+        reward = float(acf_min < self.ACF_threshold)
         return reward
-
-    def save_nan_data(
-        self,
-        rewards: list[float],
-        model: TFNetworkModel,
-        pop0s,
-        param_sets,
-        seed: int | Iterable[int] | None = None,
-        **kwargs,
-    ) -> None:
-        if self.save_dir is None:
-            warnings.warn("No save directory specified, not saving nan data")
-            return
-
-        where_nans = np.isnan(rewards)
-        if not where_nans.any():
-            return
-
-        warnings.warn(f"Saving data for {where_nans.sum()} runs with nan rewards")
-
-        # Save the nan data to HDF
-        state = model.genotype
-        dt = model.dt
-        nt = model.nt
-        maxiter = model.max_iter_per_timestep
-        if seed is None:
-            save_seed = model.seed
-        elif isinstance(seed, Iterable):
-            save_seed = seed[where_nans]
-        else:
-            save_seed = seed
-
-        fname = f"nans_state_{state}_uid_{uuid4()}.hdf5"
-        fpath = Path(self.save_dir) / fname
-        with h5py.File(fpath, "w") as f:
-            f.create_dataset("seed", data=save_seed)
-            f.create_dataset("pop0s", data=pop0s[where_nans])
-            f.create_dataset("param_sets", data=param_sets[where_nans])
-            f.attrs["state"] = state
-            f.attrs["dt"] = dt
-            f.attrs["nt"] = nt
-            f.attrs["max_iter_per_timestep"] = maxiter
