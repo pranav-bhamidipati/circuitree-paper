@@ -95,7 +95,18 @@ if __name__ == "__main__":
     #     suffix="_3tf",
     # )
 
-    ## 5 TFs, 10k samples
+    # ## 5 TFs, 10k samples
+    # save_dir = Path("data/oscillation_asymmetric_params")
+    # save_dir.mkdir(exist_ok=True)
+    # main(
+    #     n_samples=10_000,
+    #     save_dir=save_dir,
+    #     save=True,
+    #     components=list("ABCDE"),
+    #     suffix="_5tf",
+    # )
+
+    ## 5 TFs, 10k samples, with mutation
     save_dir = Path("data/oscillation_asymmetric_params")
     save_dir.mkdir(exist_ok=True)
     main(
@@ -103,5 +114,6 @@ if __name__ == "__main__":
         save_dir=save_dir,
         save=True,
         components=list("ABCDE"),
-        suffix="_5tf",
+        suffix="_5tf_pmut0.5",
+        p_mutation=0.5,
     )

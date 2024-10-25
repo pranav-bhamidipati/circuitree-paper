@@ -128,8 +128,9 @@ if __name__ == "__main__":
 
     param_sets_csv = Path(
         "~/git/circuitree-paper/data/oscillation_asymmetric_params/"
-        "241023_param_sets_10000_3tf.csv"
         # "241023_param_sets_10000_5tf.csv"
+        # "241023_param_sets_10000_3tf.csv"
+        "241025_param_sets_10000_5tf_pmut0.5.csv"
     ).expanduser()
 
     now = datetime.now().strftime("%y%m%d-%H-%M-%S")

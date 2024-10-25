@@ -11,11 +11,13 @@ from tf_network import TFNetworkModel
 
 INT64_MAXVAL = np.iinfo(np.int64).max
 
-param_sets_csv = (
-    "/home/ec2-user/git_data/circuitree/data/oscillation_asymmetric_params/"
+param_sets_csv = Path(
+    "~/git/circuitree-paper/data/oscillation_asymmetric_params/"
     # "241023_param_sets_10000_5tf.csv"
-    "241023_param_sets_10000_3tf.csv"
-)
+    # "241023_param_sets_10000_3tf.csv"
+    "241025_param_sets_10000_5tf_pmut0.5.csv"
+).expanduser()
+param_sets_csv = str(param_sets_csv.resolve().absolute())
 
 app = Celery("tasks")
 app.config_from_object("celeryconfig")
@@ -25,7 +27,7 @@ print("Database address:", app.conf["broker_url"])
 
 
 def read_params_from_table(
-    param_sets_csv: str, row: int, n_components: int
+    row: int, n_components: int, param_sets_csv: str = param_sets_csv
 ) -> pd.DataFrame:
 
     # Use the parameter set corresponding to the visit number
@@ -58,8 +60,8 @@ def run_ssa_no_time_limit(
     nt: int,
     nchunks: int,
     autocorr_threshold: float,
-    param_sets_csv: str,
     save_dir: str,
+    param_sets_csv: str = param_sets_csv,
     root_seed: int | None = None,
 ) -> tuple[float, tuple[bool, float]]:
     task_logger.info(f"Received {param_index=}, {state=}")
@@ -77,7 +79,7 @@ def run_ssa_no_time_limit(
     # Parse the parameter set from the CSV file
     n_components = len(state.split("::")[0].strip("*"))
     prots0, params, seed, mutated_component = read_params_from_table(
-        param_sets_csv, param_index, n_components
+        param_index, n_components, param_sets_csv
     )
     seed_phrase = (root_seed, seed) if root_seed is not None else (seed,)
 
@@ -188,8 +190,11 @@ def save_results(
     prots_t: list[tuple[float, ...]] = None,
     **kwargs,
 ):
+    save_dir = Path(save_dir)
+    save_dir.mkdir(exist_ok=True)
+    save_dir.joinpath("data").mkdir(exist_ok=True)
     fname = f"{prefix}state_{state}_index{param_index}.hdf5"
-    fpath = Path(save_dir) / "data" / fname
+    fpath = save_dir / "data" / fname
     if fpath.exists():
         task_logger.info(f"File {fpath} already exists. Skipping.")
     if prots_t is None:
