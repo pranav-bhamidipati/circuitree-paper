@@ -47,7 +47,9 @@ def read_params_from_table(
 
     # Extract the initial protein counts and parameter values
     prots0 = param_data[:n_components].tolist()
+    prots0 = [int(p) for p in prots0]
     params = param_data[n_components:].values.reshape(n_components, -1).tolist()
+    params = [[float(p) for p in param] for param in params]
 
     return prots0, params, seed, mutated_component
 
@@ -191,7 +193,7 @@ def save_results(
     prots_t: list[tuple[float, ...]] = None,
     **kwargs,
 ):
-    save_dir = Path(save_dir)
+    save_dir: Path = Path(save_dir)
     save_dir.mkdir(exist_ok=True)
     save_dir.joinpath("data").mkdir(exist_ok=True)
     fname = f"{prefix}state_{state}_index{param_index}.hdf5"
