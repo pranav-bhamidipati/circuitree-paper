@@ -100,6 +100,7 @@ def run_ssa_no_time_limit(
         )
         sim_state = new_state
         prots0 = prots0[:where_mutated] + prots0[where_mutated + 1 :]
+        params = params[:where_mutated] + params[where_mutated + 1 :]
     else:
         sim_state = state
 
