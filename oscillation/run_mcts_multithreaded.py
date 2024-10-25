@@ -13,6 +13,7 @@ def main(
     save_dir: Path,
     param_sets_csv: Path,
     threads: int,
+    n_components: int,
     n_steps: int = 100_000,
     n_exhausted: Optional[int] = None,
     exploration_constant: Optional[float] = None,
@@ -38,11 +39,10 @@ def main(
     print(f"Saving results to {save_dir}")
     print()
 
+    components = "ABCDEFGHIJK"[:n_components]
     tree = MultithreadedOscillationTree(
-        # root="ABCDE::",
-        # components=list("ABCDE"),
-        root="ABC::",
-        components=list("ABC"),
+        root=f"{components}::",
+        components=list(components),
         interactions=["activates", "inhibits"],
         seed=seed,
         n_exhausted=n_exhausted,
@@ -163,6 +163,7 @@ if __name__ == "__main__":
         param_sets_csv=param_sets_csv,
         # threads=0,
         threads=600,
+        n_components=5,
         n_steps=10_000,
         n_exhausted=10_000,
         # exploration_constant=exploration_constant,
