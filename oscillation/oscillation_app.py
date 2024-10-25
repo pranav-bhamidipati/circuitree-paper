@@ -37,7 +37,7 @@ def read_params_from_table(
 
     # Extract whether a component is to be mutated (removed)
     if "component_mutation" in param_data:
-        mutated_component = param_data.pop("component_mutation").item()
+        mutated_component = param_data.pop("component_mutation")
     else:
         mutated_component = "(none)"
 
