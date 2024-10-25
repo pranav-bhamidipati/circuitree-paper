@@ -164,7 +164,7 @@ if __name__ == "__main__":
         # threads=0,
         threads=600,
         n_components=5,
-        n_steps=10_000,
+        n_steps=10_000_000,
         n_exhausted=10_000,
         # exploration_constant=exploration_constant,
         max_interactions=max_interactions,
